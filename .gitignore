@@ -1,0 +1,8 @@
+.env
+*.log
+.DS_Store
+backend/one-search
+backend/tmp/
+frontend/node_modules/
+frontend/dist/
+coverage/
