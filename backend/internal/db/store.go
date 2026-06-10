@@ -325,13 +325,13 @@ func (s *Store) RecordKeyResult(ctx context.Context, key model.APIKey, success b
 func (s *Store) FindAPIToken(ctx context.Context, token string) (model.APIToken, error) {
 	hash := security.HashToken(token)
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, name, token_hash, token_prefix, scopes, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
+		SELECT id, name, token_hash, token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
 		FROM api_tokens
 		WHERE token_hash=$1 AND status='enabled'
 		  AND (daily_quota=0 OR COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.api_token_id=api_tokens.id AND u.provider_id IS NULL AND u.provider_key_id IS NULL AND u.usage_date=CURRENT_DATE),0) < daily_quota)
 	`, hash)
 	var item model.APIToken
-	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenPrefix, &item.Scopes, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.APIToken{}, err
 	}
 	_, _ = s.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at=now(), usage_count=usage_count+1 WHERE id=$1`, item.ID)
@@ -340,7 +340,7 @@ func (s *Store) FindAPIToken(ctx context.Context, token string) (model.APIToken,
 
 func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
+		SELECT id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
 		FROM api_tokens ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -350,7 +350,7 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	items := []model.APIToken{}
 	for rows.Next() {
 		var item model.APIToken
-		if err := rows.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if item.TokenCiphertext != "" {
@@ -365,7 +365,7 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	return items, rows.Err()
 }
 
-func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string, rateLimit, dailyQuota int) (model.APIToken, string, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string, allowedProviders []string, rateLimit, dailyQuota int) (model.APIToken, string, error) {
 	rawToken, err := security.RandomToken("osr_")
 	if err != nil {
 		return model.APIToken{}, "", err
@@ -380,12 +380,12 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string
 	hash := security.HashToken(rawToken)
 	prefix := security.TokenPrefix(rawToken)
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO api_tokens (name, token_hash, token_ciphertext, token_prefix, scopes, rate_limit_per_min, daily_quota)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
-	`, name, hash, tokenCiphertext, prefix, scopes, rateLimit, dailyQuota)
+		INSERT INTO api_tokens (name, token_hash, token_ciphertext, token_prefix, scopes, allowed_providers, rate_limit_per_min, daily_quota)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
+	`, name, hash, tokenCiphertext, prefix, scopes, allowedProviders, rateLimit, dailyQuota)
 	var item model.APIToken
-	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.APIToken{}, "", err
 	}
 	item.Token = rawToken
@@ -394,6 +394,15 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string
 
 func (s *Store) UpdateAPITokenStatus(ctx context.Context, id int64, status string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE api_tokens SET status=$2, updated_at=now() WHERE id=$1`, id, status)
+	return err
+}
+
+func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota int) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE api_tokens
+		SET name=$2, allowed_providers=$3, rate_limit_per_min=$4, daily_quota=$5, updated_at=now()
+		WHERE id=$1
+	`, id, name, allowedProviders, rateLimit, dailyQuota)
 	return err
 }
 

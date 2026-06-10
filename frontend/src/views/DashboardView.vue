@@ -4,7 +4,7 @@
       <el-button @click="load">刷新</el-button>
     </div>
     <el-row :gutter="16">
-      <el-col :span="6" v-for="item in metrics" :key="item.label">
+      <el-col :span="8" v-for="item in metrics" :key="item.label" class="metric-col">
         <el-card class="metric-card" shadow="never"><div class="muted">{{ item.label }}</div><h2>{{ item.value }}</h2></el-card>
       </el-col>
     </el-row>
@@ -30,6 +30,8 @@ const providers = ref<ProviderConfig[]>([])
 const metrics = computed(() => [
   { label: '总请求', value: usage.value.requests_total },
   { label: '成功请求', value: usage.value.requests_success },
+  { label: '失败请求', value: usage.value.requests_failed },
+  { label: '结果总数', value: usage.value.results_total },
   { label: '缓存命中', value: usage.value.cache_hits },
   { label: '平均延迟(ms)', value: usage.value.average_latency_ms.toFixed(1) }
 ])
@@ -40,3 +42,7 @@ async function load() {
 }
 onMounted(load)
 </script>
+
+<style scoped>
+.metric-col { margin-bottom: 16px; }
+</style>

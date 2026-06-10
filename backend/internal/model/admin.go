@@ -13,20 +13,21 @@ type AdminUser struct {
 }
 
 type APIToken struct {
-	ID              int64      `json:"id"`
-	Name            string     `json:"name"`
-	TokenHash       string     `json:"-"`
-	TokenCiphertext string     `json:"-"`
-	Token           string     `json:"token"`
-	TokenPrefix     string     `json:"token_prefix"`
-	Scopes          []string   `json:"scopes"`
-	Status          string     `json:"status"`
-	RateLimitPerMin int        `json:"rate_limit_per_min"`
-	DailyQuota      int        `json:"daily_quota"`
-	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
-	UsageCount      int64      `json:"usage_count"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID               int64      `json:"id"`
+	Name             string     `json:"name"`
+	TokenHash        string     `json:"-"`
+	TokenCiphertext  string     `json:"-"`
+	Token            string     `json:"token"`
+	TokenPrefix      string     `json:"token_prefix"`
+	Scopes           []string   `json:"scopes"`
+	AllowedProviders []string   `json:"allowed_providers"`
+	Status           string     `json:"status"`
+	RateLimitPerMin  int        `json:"rate_limit_per_min"`
+	DailyQuota       int        `json:"daily_quota"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	UsageCount       int64      `json:"usage_count"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type ProviderKeyView struct {

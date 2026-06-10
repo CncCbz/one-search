@@ -34,17 +34,18 @@ const (
 )
 
 type SearchRequest struct {
-	Query        string                 `json:"query"`
-	Providers    []string               `json:"providers,omitempty"`
-	Mode         SearchMode             `json:"mode,omitempty"`
-	Limit        int                    `json:"limit,omitempty"`
-	Freshness    string                 `json:"freshness,omitempty"`
-	Dedupe       *bool                  `json:"dedupe,omitempty"`
-	Rerank       bool                   `json:"rerank,omitempty"`
-	Cache        CachePolicy            `json:"cache,omitempty"`
-	IncludeRaw   bool                   `json:"include_raw,omitempty"`
-	CompatFormat CompatFormat           `json:"-"`
-	Options      map[string]interface{} `json:"options,omitempty"`
+	Query         string                 `json:"query"`
+	Providers     []string               `json:"providers,omitempty"`
+	Mode          SearchMode             `json:"mode,omitempty"`
+	Limit         int                    `json:"limit,omitempty"`
+	LimitExplicit bool                   `json:"-"`
+	Freshness     string                 `json:"freshness,omitempty"`
+	Dedupe        *bool                  `json:"dedupe,omitempty"`
+	Rerank        bool                   `json:"rerank,omitempty"`
+	Cache         CachePolicy            `json:"cache,omitempty"`
+	IncludeRaw    bool                   `json:"include_raw,omitempty"`
+	CompatFormat  CompatFormat           `json:"-"`
+	Options       map[string]interface{} `json:"options,omitempty"`
 }
 
 type SearchResponse struct {

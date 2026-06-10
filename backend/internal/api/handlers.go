@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -22,8 +25,9 @@ type AppStore interface {
 	UpdateProviderKey(ctx context.Context, id int64, patch model.ProviderKeyUpdate) (model.ProviderKeyView, error)
 	DeleteProviderKey(ctx context.Context, id int64) error
 	ListAPITokens(ctx context.Context) ([]model.APIToken, error)
-	CreateAPIToken(ctx context.Context, name string, scopes []string, rateLimit, dailyQuota int) (model.APIToken, string, error)
+	CreateAPIToken(ctx context.Context, name string, scopes []string, allowedProviders []string, rateLimit, dailyQuota int) (model.APIToken, string, error)
 	UpdateAPITokenStatus(ctx context.Context, id int64, status string) error
+	UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota int) error
 	DeleteAPIToken(ctx context.Context, id int64) error
 	UpdateRuntimeSettings(ctx context.Context, settings model.RuntimeSettings) error
 	ListSearchLogs(ctx context.Context, limit int) ([]model.SearchLog, error)
@@ -79,11 +83,17 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
 	var req model.SearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	req.LimitExplicit = hasJSONField(body, "limit")
 	req.CompatFormat = model.CompatFormatNative
 	h.runSearch(w, r, req)
 }
@@ -113,12 +123,18 @@ func (h *Handler) tavilySearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "tavily compatibility endpoint is disabled")
 		return
 	}
+	body, err := readBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
 	var req compat.TavilySearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	native := compat.TavilyToNative(req)
+	native.LimitExplicit = hasJSONField(body, "max_results")
 	response, err := h.orchestrator.Search(r.Context(), native, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -137,12 +153,18 @@ func (h *Handler) serperSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "serper compatibility endpoint is disabled")
 		return
 	}
+	body, err := readBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
 	var req compat.SerperSearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	native := compat.SerperToNative(req)
+	native.LimitExplicit = hasJSONField(body, "num")
 	response, err := h.orchestrator.Search(r.Context(), native, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -161,12 +183,18 @@ func (h *Handler) openAISearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "openai compatibility endpoint is disabled")
 		return
 	}
+	body, err := readBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
 	var req compat.OpenAISearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	native := compat.OpenAIToNative(req)
+	native.LimitExplicit = hasJSONField(body, "limit")
 	response, err := h.orchestrator.Search(r.Context(), native, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -179,6 +207,14 @@ func (h *Handler) runSearch(w http.ResponseWriter, r *http.Request, req model.Se
 	if req.Query == "" {
 		writeError(w, http.StatusBadRequest, "query is required")
 		return
+	}
+	if token, ok := APIToken(r.Context()); ok {
+		filtered, err := applyTokenProviders(req.Providers, token.AllowedProviders)
+		if err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		req.Providers = filtered
 	}
 	response, err := h.orchestrator.Search(r.Context(), req, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
@@ -345,16 +381,17 @@ func (h *Handler) listTokens(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name            string   `json:"name"`
-		Scopes          []string `json:"scopes"`
-		RateLimitPerMin int      `json:"rate_limit_per_min"`
-		DailyQuota      int      `json:"daily_quota"`
+		Name             string   `json:"name"`
+		Scopes           []string `json:"scopes"`
+		AllowedProviders []string `json:"allowed_providers"`
+		RateLimitPerMin  int      `json:"rate_limit_per_min"`
+		DailyQuota       int      `json:"daily_quota"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	token, raw, err := h.store.CreateAPIToken(r.Context(), req.Name, req.Scopes, req.RateLimitPerMin, req.DailyQuota)
+	token, raw, err := h.store.CreateAPIToken(r.Context(), req.Name, req.Scopes, req.AllowedProviders, req.RateLimitPerMin, req.DailyQuota)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -369,15 +406,26 @@ func (h *Handler) updateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Status string `json:"status"`
+		Name             string   `json:"name"`
+		AllowedProviders []string `json:"allowed_providers"`
+		RateLimitPerMin  int      `json:"rate_limit_per_min"`
+		DailyQuota       int      `json:"daily_quota"`
+		Status           string   `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if err := h.store.UpdateAPITokenStatus(r.Context(), id, req.Status); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	if req.Name != "" {
+		if err := h.store.UpdateAPIToken(r.Context(), id, req.Name, req.AllowedProviders, req.RateLimitPerMin, req.DailyQuota); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else if req.Status != "" {
+		if err := h.store.UpdateAPITokenStatus(r.Context(), id, req.Status); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -439,4 +487,43 @@ func (h *Handler) logDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"log": log, "calls": calls})
+}
+
+func readBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
+func hasJSONField(body []byte, field string) bool {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	_, ok := payload[field]
+	return ok
+}
+
+func applyTokenProviders(requested, allowed []string) ([]string, error) {
+	if len(allowed) == 0 {
+		return requested, nil
+	}
+	allowedSet := map[string]bool{}
+	for _, item := range allowed {
+		allowedSet[item] = true
+	}
+	if len(requested) == 0 {
+		return allowed, nil
+	}
+	filtered := []string{}
+	for _, item := range requested {
+		if !allowedSet[item] {
+			return nil, fmt.Errorf("api token is not allowed to request provider %s", item)
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, nil
 }

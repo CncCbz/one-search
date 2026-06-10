@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/one-search/one-search/backend/internal/model"
 )
 
 type contextKey string
@@ -14,6 +16,7 @@ type contextKey string
 const (
 	requestIDKey  contextKey = "request_id"
 	apiTokenIDKey contextKey = "api_token_id"
+	apiTokenKey   contextKey = "api_token"
 )
 
 func requestIDMiddleware(next http.Handler) http.Handler {
@@ -97,6 +100,11 @@ func RequestID(ctx context.Context) string {
 func APITokenID(ctx context.Context) int64 {
 	value, _ := ctx.Value(apiTokenIDKey).(int64)
 	return value
+}
+
+func APIToken(ctx context.Context) (model.APIToken, bool) {
+	value, ok := ctx.Value(apiTokenKey).(model.APIToken)
+	return value, ok
 }
 
 func bearerToken(r *http.Request) string {

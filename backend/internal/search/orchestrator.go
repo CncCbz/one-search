@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"sort"
 	"strings"
@@ -46,10 +47,16 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 		return model.SearchResponse{}, err
 	}
 	req = applyDefaults(req, settings)
+	providerLimits := o.providerResultLimits(ctx)
+	if !req.LimitExplicit && len(req.Providers) == 1 {
+		if limit := providerLimits[req.Providers[0]]; limit > 0 {
+			req.Limit = limit
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(settings.RequestTimeoutMS)*time.Millisecond)
 	defer cancel()
 
-	cacheKey := o.cacheKey(req)
+	cacheKey := o.cacheKey(req, providerLimits)
 	cacheEnabled := settings.CacheEnabled && req.Cache != model.CachePolicyBypass && req.Cache != model.CachePolicyRefresh
 	if cacheEnabled {
 		if payload, hit, err := o.store.GetCache(ctx, cacheKey); err != nil {
@@ -86,11 +93,11 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	var providerResults []providerExecution
 	switch req.Mode {
 	case model.SearchModeFallback:
-		providerResults = o.searchFallback(ctx, req)
+		providerResults = o.searchFallback(ctx, req, providerLimits)
 	case model.SearchModeSingle:
-		providerResults = o.searchSingle(ctx, req)
+		providerResults = o.searchSingle(ctx, req, providerLimits)
 	default:
-		providerResults = o.searchParallel(ctx, req)
+		providerResults = o.searchParallel(ctx, req, providerLimits)
 	}
 
 	results, deduped := mergeResults(providerResults, req)
@@ -142,24 +149,24 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	return response, nil
 }
 
-func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest) []providerExecution {
+func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerLimits map[string]int) []providerExecution {
 	var wg sync.WaitGroup
 	results := make([]providerExecution, len(req.Providers))
 	for index, name := range req.Providers {
 		wg.Add(1)
 		go func(i int, providerName string) {
 			defer wg.Done()
-			results[i] = o.callProvider(ctx, req, providerName)
+			results[i] = o.callProvider(ctx, req, providerName, providerLimits)
 		}(index, name)
 	}
 	wg.Wait()
 	return results
 }
 
-func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest) []providerExecution {
+func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerLimits map[string]int) []providerExecution {
 	results := []providerExecution{}
 	for _, name := range req.Providers {
-		execution := o.callProvider(ctx, req, name)
+		execution := o.callProvider(ctx, req, name, providerLimits)
 		results = append(results, execution)
 		if execution.err == nil && len(execution.results) > 0 {
 			break
@@ -168,14 +175,14 @@ func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchReque
 	return results
 }
 
-func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest) []providerExecution {
+func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerLimits map[string]int) []providerExecution {
 	if len(req.Providers) == 0 {
 		return nil
 	}
-	return []providerExecution{o.callProvider(ctx, req, req.Providers[0])}
+	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerLimits)}
 }
 
-func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string) providerExecution {
+func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerLimits map[string]int) providerExecution {
 	started := time.Now()
 	execution := providerExecution{provider: providerName, status: "error"}
 	adapter, ok := o.registry.Get(providerName)
@@ -194,7 +201,11 @@ func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest
 	}
 	execution.key = key
 	execution.keyAlias = key.Alias
-	providerResponse, err := adapter.Search(ctx, req, key)
+	providerReq := req
+	if limit := providerLimits[providerName]; limit > 0 {
+		providerReq.Limit = limit
+	}
+	providerResponse, err := adapter.Search(ctx, providerReq, key)
 	success := err == nil
 	release(success, err)
 	execution.latencyMS = time.Since(started).Milliseconds()
@@ -308,17 +319,60 @@ func appendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
-func (o *Orchestrator) cacheKey(req model.SearchRequest) string {
+func (o *Orchestrator) providerResultLimits(ctx context.Context) map[string]int {
+	providers, err := o.store.ListProviders(ctx)
+	if err != nil {
+		return map[string]int{}
+	}
+	limits := map[string]int{}
+	for _, item := range providers {
+		if limit := resultLimitFromSettings(item.Settings); limit > 0 {
+			limits[item.Name] = limit
+		}
+	}
+	return limits
+}
+
+func resultLimitFromSettings(settings map[string]interface{}) int {
+	if settings == nil {
+		return 0
+	}
+	value, ok := settings["request_result_limit"]
+	if !ok {
+		return 0
+	}
+	limit := 0
+	switch typed := value.(type) {
+	case int:
+		limit = typed
+	case int64:
+		limit = int(typed)
+	case float64:
+		limit = int(typed)
+	case string:
+		_, _ = fmt.Sscanf(typed, "%d", &limit)
+	}
+	if limit < 1 {
+		return 0
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
+}
+
+func (o *Orchestrator) cacheKey(req model.SearchRequest, providerLimits map[string]int) string {
 	payload, _ := json.Marshal(map[string]interface{}{
-		"query":     req.Query,
-		"providers": req.Providers,
-		"mode":      req.Mode,
-		"limit":     req.Limit,
-		"freshness": req.Freshness,
-		"dedupe":    req.Dedupe,
-		"rerank":    req.Rerank,
-		"compat":    req.CompatFormat,
-		"options":   req.Options,
+		"query":           req.Query,
+		"providers":       req.Providers,
+		"provider_limits": providerLimits,
+		"mode":            req.Mode,
+		"limit":           req.Limit,
+		"freshness":       req.Freshness,
+		"dedupe":          req.Dedupe,
+		"rerank":          req.Rerank,
+		"compat":          req.CompatFormat,
+		"options":         req.Options,
 	})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])

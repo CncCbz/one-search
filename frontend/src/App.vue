@@ -15,7 +15,6 @@
         <el-menu-item index="/tokens">接口令牌</el-menu-item>
         <el-menu-item index="/playground">搜索调试</el-menu-item>
         <el-menu-item index="/logs">请求日志</el-menu-item>
-        <el-menu-item index="/usage">用量统计</el-menu-item>
         <el-menu-item index="/settings">系统设置</el-menu-item>
       </el-menu>
     </el-aside>

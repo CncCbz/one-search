@@ -117,6 +117,10 @@
                   <el-input-number v-model="providerForm.timeout_ms" :min="1000" controls-position="right" />
                 </div>
                 <div class="advanced-field">
+                  <div class="advanced-field-label">请求结果数</div>
+                  <el-input-number v-model="providerRequestLimit" :min="1" :max="50" controls-position="right" />
+                </div>
+                <div class="advanced-field">
                   <div class="advanced-field-label">启用缓存</div>
                   <el-switch v-model="providerForm.default_cache_enabled" />
                 </div>
@@ -173,6 +177,16 @@ const providerCards = computed<ProviderCard[]>(() => providers.value.map((provid
 const selectedKeys = computed(() => providerForm.value ? keys.value.filter((item) => item.provider_name === providerForm.value?.name) : [])
 const tableKeys = computed<EditableKey[]>(() => creatingRow.value ? [{ id: 0, provider_id: 0, provider_name: providerForm.value?.name || '', alias: '', key_hint: '', key: '', status: 'enabled', weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0, max_concurrency: 1, current_failures: 0, total_successes: 0, total_failures: 0, daily_used: 0, monthly_used: 0, created_at: '', updated_at: '', isNew: true }, ...selectedKeys.value] : selectedKeys.value)
 const dialogTitle = computed(() => providerForm.value ? `编辑 ${providerForm.value.display_name}` : '编辑平台')
+const providerRequestLimit = computed({
+  get() {
+    const value = providerForm.value?.settings?.request_result_limit
+    return typeof value === 'number' ? value : 10
+  },
+  set(value: number) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), request_result_limit: value }
+  }
+})
 
 function providerShortName(name: string) {
   if (/you/i.test(name)) return 'Y'
@@ -214,7 +228,9 @@ async function load() {
 }
 
 function openProvider(provider: ProviderConfig) {
-  providerForm.value = { ...JSON.parse(JSON.stringify(provider)), default_cache_enabled: false }
+  const next = { ...JSON.parse(JSON.stringify(provider)), default_cache_enabled: false }
+  next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10) }
+  providerForm.value = next
   creatingRow.value = false
   draftKey.value = ''
   visibleKeyIds.value = new Set()

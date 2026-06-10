@@ -25,7 +25,7 @@
             </el-select>
           </div>
           <div class="settings-item">
-            <span>默认结果数</span>
+            <span>汇总返回结果数</span>
             <el-input-number v-model="settings.default_limit" :min="1" :max="50" controls-position="right" />
           </div>
           <div class="settings-item">

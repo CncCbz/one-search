@@ -1,0 +1,1 @@
+ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS allowed_providers TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

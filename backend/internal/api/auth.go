@@ -93,6 +93,7 @@ func (a *AuthService) requireAPIToken(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiTokenIDKey, apiToken.ID)
+		ctx = context.WithValue(ctx, apiTokenKey, apiToken)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

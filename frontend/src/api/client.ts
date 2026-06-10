@@ -56,6 +56,7 @@ export interface ApiToken {
   token_prefix: string
   token: string
   scopes: string[]
+  allowed_providers: string[]
   status: string
   rate_limit_per_min: number
   daily_quota: number
@@ -137,7 +138,7 @@ export const api = {
   testKey: (id: number, payload: Record<string, unknown>) => apiFetch('/api/admin/keys/' + id + '/test', { method: 'POST', body: JSON.stringify(payload) }),
   tokens: () => apiFetch<{ tokens: ApiToken[] }>('/api/admin/tokens'),
   createToken: (payload: Record<string, unknown>) => apiFetch<{ token: ApiToken; raw_token: string }>('/api/admin/tokens', { method: 'POST', body: JSON.stringify(payload) }),
-  updateToken: (id: number, status: string) => apiFetch('/api/admin/tokens/' + id, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  updateToken: (id: number, payload: Record<string, unknown>) => apiFetch('/api/admin/tokens/' + id, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteToken: (id: number) => apiFetch('/api/admin/tokens/' + id, { method: 'DELETE' }),
   settings: () => apiFetch<RuntimeSettings>('/api/admin/settings'),
   updateSettings: (payload: RuntimeSettings) => apiFetch<RuntimeSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
