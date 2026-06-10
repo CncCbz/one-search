@@ -22,7 +22,8 @@
             <div class="log-tags">
               <el-tag size="small" type="info">{{ modeLabel(scope.row.mode) }}</el-tag>
               <el-tag size="small">{{ scope.row.compat_format }}</el-tag>
-              <el-tag size="small" :type="scope.row.cache_hit ? 'success' : 'info'">{{ scope.row.cache_hit ? '缓存命中' : '未命中' }}</el-tag>
+              <el-tag size="small" :type="scope.row.cache_hit ? 'success' : 'info'">{{ scope.row.cache_hit ? '缓存命中' :
+                '未命中' }}</el-tag>
             </div>
           </template>
         </el-table-column>
@@ -33,14 +34,16 @@
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="scope">
-            <el-tag :type="scope.row.status === 'success' ? 'success' : 'danger'">{{ scope.row.status === 'success' ? '成功' : '失败' }}</el-tag>
+            <el-tag :type="scope.row.status === 'success' ? 'success' : 'danger'">{{ scope.row.status === 'success' ?
+              '成功' : '失败' }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="耗时" width="120">
           <template #default="scope">{{ formatLatency(scope.row.latency_ms) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90" align="right">
-          <template #default="scope"><el-button link type="primary" @click="openDetail(scope.row)">详情</el-button></template>
+          <template #default="scope"><el-button link type="primary"
+              @click="openDetail(scope.row)">详情</el-button></template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -54,10 +57,12 @@
               <el-descriptions-item label="时间">{{ formatTime(selectedLog.created_at) }}</el-descriptions-item>
               <el-descriptions-item label="模式">{{ modeLabel(selectedLog.mode) }}</el-descriptions-item>
               <el-descriptions-item label="格式">{{ selectedLog.compat_format }}</el-descriptions-item>
-              <el-descriptions-item label="状态">{{ selectedLog.status === 'success' ? '成功' : '失败' }}</el-descriptions-item>
+              <el-descriptions-item label="状态">{{ selectedLog.status === 'success' ? '成功' : '失败'
+                }}</el-descriptions-item>
               <el-descriptions-item label="延迟">{{ formatLatency(selectedLog.latency_ms) }}</el-descriptions-item>
               <el-descriptions-item label="搜索词" :span="2">{{ selectedLog.query }}</el-descriptions-item>
-              <el-descriptions-item v-if="selectedLog.error_message" label="错误" :span="2">{{ selectedLog.error_message }}</el-descriptions-item>
+              <el-descriptions-item v-if="selectedLog.error_message" label="错误" :span="2">{{ selectedLog.error_message
+                }}</el-descriptions-item>
             </el-descriptions>
 
             <div class="detail-section">
@@ -74,28 +79,37 @@
           <el-tab-pane label="请求结果" name="results">
             <div class="detail-section first-section">
               <div class="detail-title">渠道调用</div>
-              <el-table :data="providerCallRows" size="small" border row-key="key" max-height="360" class="provider-call-table">
+              <el-table :data="providerCallRows" size="small" border row-key="key" max-height="360"
+                class="provider-call-table">
                 <el-table-column type="expand" width="46">
                   <template #default="scope">
                     <div class="provider-expanded-results">
                       <div v-if="scope.row.results.length" class="result-list provider-result-list">
-                        <div v-for="(item, index) in scope.row.results" :key="resultKey(scope.row.key, index, item)" class="result-card">
+                        <div v-for="(item, index) in scope.row.results" :key="resultKey(scope.row.key, index, item)"
+                          class="result-card">
                           <div class="result-row">
-                            <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ index + 1 }}. {{ item.title || item.url }}</a>
-                            <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题' }}</span>
+                            <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank"
+                              rel="noreferrer">{{ index + 1 }}. {{ item.title || item.url }}</a>
+                            <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title ||
+                              '无标题' }}</span>
                             <div class="result-row-meta">
-                              <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score) }}</span>
+                              <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score)
+                                }}</span>
                               <el-tag size="small">{{ resultProviderLabel(item, scope.row.provider_name) }}</el-tag>
-                              <el-button v-if="hasResultDetails(item)" link class="result-expand-button" :icon="isResultOpen(resultKey(scope.row.key, index, item)) ? ArrowUp : ArrowDown" :title="isResultOpen(resultKey(scope.row.key, index, item)) ? '收起内容' : '展开内容'" @click.stop="toggleResultKey(resultKey(scope.row.key, index, item))" />
+                              <el-button v-if="hasResultDetails(item)" link class="result-expand-button"
+                                :icon="isResultOpen(resultKey(scope.row.key, index, item)) ? ArrowUp : ArrowDown"
+                                :title="isResultOpen(resultKey(scope.row.key, index, item)) ? '收起内容' : '展开内容'"
+                                @click.stop="toggleResultKey(resultKey(scope.row.key, index, item))" />
                             </div>
                           </div>
-                          <div v-if="hasResultDetails(item) && isResultOpen(resultKey(scope.row.key, index, item))" class="result-detail">
+                          <div v-if="hasResultDetails(item) && isResultOpen(resultKey(scope.row.key, index, item))"
+                            class="result-detail">
                             <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
                             <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
                           </div>
                         </div>
                       </div>
-                      <el-empty v-else :description="scope.row.error_message || '该渠道暂无搜索结果'" />
+                      <el-empty v-else :description="callEmptyDescription(scope.row)" />
                     </div>
                   </template>
                 </el-table-column>
@@ -103,13 +117,25 @@
                   <template #default="scope">{{ providerLabel(scope.row.provider_name) }}</template>
                 </el-table-column>
                 <el-table-column prop="key_alias" label="密钥" min-width="130" />
-                <el-table-column prop="status" label="状态" width="90">
-                  <template #default="scope"><el-tag :type="callSuccess(scope.row) ? 'success' : 'danger'">{{ callSuccess(scope.row) ? '成功' : '失败' }}</el-tag></template>
+                <el-table-column prop="attempt_index" label="尝试" width="86">
+                  <template #default="scope">第 {{ scope.row.attempt_index || 1 }} 次</template>
+                </el-table-column>
+                <el-table-column prop="status" label="状态" width="132">
+                  <template #default="scope">
+                    <div class="call-status-cell">
+                      <el-tag :type="callSuccess(scope.row) ? 'success' : 'danger'">{{ callSuccess(scope.row) ? '成功' : '失败'
+                        }}</el-tag>
+                      <el-tag v-if="scope.row.will_retry" size="small" type="warning">将重试</el-tag>
+                    </div>
+                  </template>
                 </el-table-column>
                 <el-table-column prop="result_count" label="结果" width="80" />
-                <el-table-column prop="latency_ms" label="延迟" width="100"><template #default="scope">{{ formatLatency(scope.row.latency_ms) }}</template></el-table-column>
-                <el-table-column prop="cached" label="缓存" width="80"><template #default="scope">{{ scope.row.cached ? '是' : '否' }}</template></el-table-column>
-                <el-table-column prop="error_message" label="错误" min-width="220"><template #default="scope">{{ scope.row.error_message || '-' }}</template></el-table-column>
+                <el-table-column prop="latency_ms" label="延迟" width="100"><template #default="scope">{{
+                  formatLatency(scope.row.latency_ms) }}</template></el-table-column>
+                <el-table-column prop="cached" label="缓存" width="80"><template #default="scope">{{ scope.row.cached ?
+                    '是' : '否' }}</template></el-table-column>
+                <el-table-column prop="error_message" label="错误" min-width="220"><template #default="scope">{{
+                  scope.row.error_message || '-' }}</template></el-table-column>
               </el-table>
             </div>
 
@@ -118,15 +144,22 @@
               <div v-if="searchResults.length" class="result-list merged-result-list">
                 <div v-for="(item, index) in searchResults" :key="resultKey('merged', index, item)" class="result-card">
                   <div class="result-row">
-                    <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ index + 1 }}. {{ item.title || item.url }}</a>
-                    <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题' }}</span>
+                    <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank" rel="noreferrer">{{
+                      index + 1
+                      }}. {{ item.title || item.url }}</a>
+                    <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题'
+                      }}</span>
                     <div class="result-row-meta">
                       <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score) }}</span>
                       <el-tag size="small">{{ resultProviderLabel(item) }}</el-tag>
-                      <el-button v-if="hasResultDetails(item)" link class="result-expand-button" :icon="isResultOpen(resultKey('merged', index, item)) ? ArrowUp : ArrowDown" :title="isResultOpen(resultKey('merged', index, item)) ? '收起内容' : '展开内容'" @click.stop="toggleResultKey(resultKey('merged', index, item))" />
+                      <el-button v-if="hasResultDetails(item)" link class="result-expand-button"
+                        :icon="isResultOpen(resultKey('merged', index, item)) ? ArrowUp : ArrowDown"
+                        :title="isResultOpen(resultKey('merged', index, item)) ? '收起内容' : '展开内容'"
+                        @click.stop="toggleResultKey(resultKey('merged', index, item))" />
                     </div>
                   </div>
-                  <div v-if="hasResultDetails(item) && isResultOpen(resultKey('merged', index, item))" class="result-detail">
+                  <div v-if="hasResultDetails(item) && isResultOpen(resultKey('merged', index, item))"
+                    class="result-detail">
                     <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
                     <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
                   </div>
@@ -190,6 +223,7 @@ type ProviderCallRow = ProviderCallLog & {
 type SearchResponseLog = {
   results?: SearchResultItem[]
   provider_results?: ProviderResultGroup[]
+  provider_calls?: ProviderCallLog[]
   meta?: Record<string, unknown>
 }
 
@@ -224,23 +258,28 @@ const providerResultGroups = computed<ProviderResultGroupView[]>(() => {
     }
   })
 })
+const loggedProviderCalls = computed(() => detailCalls.value.length ? detailCalls.value : responseLog.value.provider_calls || [])
 const providerCallRows = computed<ProviderCallRow[]>(() => {
   const groupsByProvider = new Map(providerResultGroups.value.map((group) => [group.provider, group]))
   const usedProviders = new Set<string>()
-  const rows = detailCalls.value.map((call, index) => {
+  const rows = loggedProviderCalls.value.map((call, index) => {
     const group = groupsByProvider.get(call.provider_name)
+    const status = call.status || group?.status || 'success'
+    const hasResults = status === 'success'
     usedProviders.add(call.provider_name)
     return {
       ...call,
-      key: `${call.provider_name}-${call.provider_key_id || index}`,
+      key: providerCallKey(call, index),
       key_alias: call.key_alias || group?.key_alias || '',
-      status: call.status || group?.status || 'success',
+      attempt_index: call.attempt_index || 1,
+      will_retry: Boolean(call.will_retry),
+      status,
       error_type: call.error_type || group?.error_type || '',
-      error_message: call.error_message || group?.error || '',
+      error_message: call.error_message || (hasResults ? '' : group?.error || ''),
       latency_ms: call.latency_ms || group?.latency_ms || 0,
-      result_count: call.result_count || group?.result_count || group?.results.length || 0,
+      result_count: call.result_count || (hasResults ? group?.result_count || group?.results.length || 0 : 0),
       cached: call.cached || Boolean(group?.cached),
-      results: group?.results || []
+      results: hasResults ? group?.results || [] : []
     }
   })
   for (const group of providerResultGroups.value) {
@@ -250,13 +289,15 @@ const providerCallRows = computed<ProviderCallRow[]>(() => {
       provider_key_id: 0,
       provider_name: group.provider,
       key_alias: group.key_alias || '',
+      attempt_index: 1,
+      will_retry: false,
       status: group.status,
       error_type: group.error_type || '',
       error_message: group.error || '',
       latency_ms: group.latency_ms,
       result_count: group.result_count,
       cached: group.cached,
-      results: group.results
+      results: group.status === 'success' ? group.results : []
     })
   }
   return rows
@@ -312,6 +353,16 @@ function formatLatency(value: number) {
 
 function callSuccess(call: ProviderCallLog) {
   return call.status === 'success'
+}
+
+function providerCallKey(call: ProviderCallLog, index: number) {
+  return `${call.provider_name}-${call.provider_key_id || 'no-key'}-${call.attempt_index || 1}-${index}`
+}
+
+function callEmptyDescription(call: ProviderCallRow) {
+  if (call.error_message) return call.will_retry ? `${call.error_message}，将换 key 重试` : call.error_message
+  if (call.will_retry) return '本次失败，已换 key 重试'
+  return '该渠道暂无搜索结果'
 }
 
 function hasResultDetails(item: SearchResultItem) {
@@ -377,44 +428,233 @@ onBeforeUnmount(stopAutoRefresh)
 </script>
 
 <style scoped>
-.logs-actions { gap: 12px; }
-.logs-card :deep(.el-card__body) { padding-bottom: 0; }
-.logs-table :deep(.el-table__cell) { padding: 12px 0; }
-.log-main-cell { min-width: 0; }
-.log-query { overflow: hidden; color: var(--text); font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.log-subline { display: flex; align-items: center; gap: 10px; margin-top: 6px; color: var(--muted); font-size: 12px; }
-.log-request-id { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.log-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.log-detail-dialog :deep(.el-dialog) { max-width: calc(100vw - 32px); }
-.log-detail-dialog :deep(.el-dialog__body) { max-height: calc(100vh - 116px); overflow: hidden; }
-.log-detail-tabs :deep(.el-tabs__content) { max-height: calc(100vh - 220px); overflow-y: auto; padding-right: 4px; }
-.detail-section { margin-top: 16px; }
-.first-section { margin-top: 2px; }
-.detail-title { margin-bottom: 8px; color: var(--text); font-weight: 800; }
-.request-param-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
-.request-param-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 10px 12px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.request-param-item span { color: var(--muted); }
-.request-param-item strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-.provider-call-table { width: 100%; }
-.provider-call-table :deep(.el-table__expanded-cell) { padding: 10px 12px; background: rgba(47, 148, 97, .04); }
-.provider-expanded-results { max-height: 320px; overflow-y: auto; padding-right: 4px; }
-.result-list { display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
-.provider-result-list { padding-bottom: 2px; }
-.merged-result-list { max-height: 420px; overflow-y: auto; }
-.result-card { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--el-border-radius-base); background: #fff; }
-.result-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; }
-.result-title-link { min-width: 0; overflow: hidden; color: var(--text); font-weight: 800; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
-.result-title-link:hover { color: var(--primary); }
-.result-title-text { display: block; }
-.result-row-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.result-score { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.result-expand-button { width: 24px; height: 24px; min-height: 24px; padding: 0; color: var(--primary); }
-.result-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-.result-snippet { margin: 0; color: var(--muted); line-height: 1.6; white-space: pre-wrap; }
-.result-content { margin-top: 8px; color: var(--text); }
-@media (max-width: 1100px) { .request-param-grid { grid-template-columns: 1fr; } }
+.logs-actions {
+  gap: 12px;
+}
+
+.logs-card :deep(.el-card__body) {
+  padding-bottom: 0;
+}
+
+.logs-table :deep(.el-table__cell) {
+  padding: 12px 0;
+}
+
+.log-main-cell {
+  min-width: 0;
+}
+
+.log-query {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-subline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.log-request-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.log-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.log-detail-dialog :deep(.el-dialog) {
+  max-width: calc(100vw - 32px);
+}
+
+.log-detail-dialog :deep(.el-dialog__body) {
+  max-height: calc(100vh - 116px);
+  overflow: hidden;
+}
+
+.log-detail-tabs :deep(.el-tabs__content) {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.detail-section {
+  margin-top: 16px;
+}
+
+.first-section {
+  margin-top: 2px;
+}
+
+.detail-title {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.request-param-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+
+.request-param-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.request-param-item span {
+  color: var(--muted);
+}
+
+.request-param-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.provider-call-table {
+  width: 100%;
+}
+
+.call-status-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-call-table :deep(.el-table__expanded-cell) {
+  padding: 10px 12px;
+  background: rgba(47, 148, 97, .04);
+}
+
+.provider-expanded-results {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.provider-result-list {
+  padding-bottom: 2px;
+}
+
+.merged-result-list {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.result-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--el-border-radius-base);
+  background: #fff;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.result-title-link {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.result-title-link:hover {
+  color: var(--primary);
+}
+
+.result-title-text {
+  display: block;
+}
+
+.result-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.result-score {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.result-expand-button {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: var(--primary);
+}
+
+.result-detail {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.result-snippet {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.result-content {
+  margin-top: 8px;
+  color: var(--text);
+}
+
+@media (max-width: 1100px) {
+  .request-param-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
-  .result-row { align-items: flex-start; flex-direction: column; }
-  .result-row-meta { flex-wrap: wrap; }
+  .result-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .result-row-meta {
+    flex-wrap: wrap;
+  }
 }
 </style>

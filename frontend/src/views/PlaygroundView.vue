@@ -46,13 +46,14 @@
                     </div>
                   </div>
                 </div>
-                <el-empty v-else :description="scope.row.error || '该渠道暂无搜索结果'" />
+                <el-empty v-else :description="callEmptyDescription(scope.row)" />
               </div>
             </template>
           </el-table-column>
           <el-table-column prop="provider" label="渠道"><template #default="scope">{{ providerLabel(scope.row.provider) }}</template></el-table-column>
           <el-table-column prop="key_alias" label="密钥" />
-          <el-table-column prop="status" label="状态" width="90"><template #default="scope"><el-tag :type="scope.row.status === 'success' ? 'success' : 'danger'">{{ scope.row.status === 'success' ? '成功' : '失败' }}</el-tag></template></el-table-column>
+          <el-table-column prop="attempt_index" label="尝试" width="86"><template #default="scope">第 {{ scope.row.attempt_index || 1 }} 次</template></el-table-column>
+          <el-table-column prop="status" label="状态" width="132"><template #default="scope"><div class="call-status-cell"><el-tag :type="scope.row.status === 'success' ? 'success' : 'danger'">{{ scope.row.status === 'success' ? '成功' : '失败' }}</el-tag><el-tag v-if="scope.row.will_retry" size="small" type="warning">将重试</el-tag></div></template></el-table-column>
           <el-table-column prop="result_count" label="结果" width="80" />
           <el-table-column prop="latency_ms" label="延迟" width="100"><template #default="scope">{{ formatLatency(scope.row.latency_ms) }}</template></el-table-column>
           <el-table-column prop="error" label="错误"><template #default="scope">{{ scope.row.error || '-' }}</template></el-table-column>
@@ -88,7 +89,7 @@
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
-import { api } from '../api/client'
+import { api, ProviderCallLog } from '../api/client'
 
 type SearchResultItem = {
   title?: string
@@ -117,6 +118,8 @@ type ProviderResultGroup = ProviderSummary & {
 
 type ProviderRow = ProviderSummary & {
   key: string
+  attempt_index?: number
+  will_retry?: boolean
   results: SearchResultItem[]
 }
 
@@ -124,6 +127,7 @@ type SearchResponse = {
   results: SearchResultItem[]
   providers: ProviderSummary[]
   provider_results?: ProviderResultGroup[]
+  provider_calls?: ProviderCallLog[]
   meta?: {
     request_id?: string
     total_results?: number
@@ -141,19 +145,44 @@ const providerRows = computed<ProviderRow[]>(() => {
   if (!result.value) return []
   const groups = new Map((result.value.provider_results || []).map((group) => [group.provider, group]))
   const usedProviders = new Set<string>()
+  const calls = result.value.provider_calls || []
+  if (calls.length) {
+    return calls.map((call, index) => {
+      const group = groups.get(call.provider_name)
+      const status = call.status || group?.status || 'success'
+      const hasResults = status === 'success'
+      usedProviders.add(call.provider_name)
+      return {
+        provider: call.provider_name,
+        key: providerCallKey(call, index),
+        key_alias: call.key_alias || group?.key_alias || '',
+        attempt_index: call.attempt_index || 1,
+        will_retry: Boolean(call.will_retry),
+        status,
+        error: call.error_message || (hasResults ? '' : group?.error || ''),
+        latency_ms: call.latency_ms || group?.latency_ms || 0,
+        result_count: call.result_count || (hasResults ? group?.result_count || group?.results?.length || 0 : 0),
+        cached: call.cached || Boolean(group?.cached),
+        results: hasResults ? group?.results || [] : []
+      }
+    })
+  }
   const rows = result.value.providers.map((provider, index) => {
     const group = groups.get(provider.provider)
+    const status = provider.status || group?.status || 'success'
     usedProviders.add(provider.provider)
     return {
       ...provider,
       key: `${provider.provider}-${index}`,
+      attempt_index: 1,
+      will_retry: false,
       key_alias: provider.key_alias || group?.key_alias || '',
-      status: provider.status || group?.status || 'success',
+      status,
       error: provider.error || group?.error || '',
       latency_ms: provider.latency_ms || group?.latency_ms || 0,
       result_count: provider.result_count || group?.result_count || group?.results?.length || 0,
       cached: provider.cached || Boolean(group?.cached),
-      results: group?.results || []
+      results: status === 'success' ? group?.results || [] : []
     }
   })
   for (const group of result.value.provider_results || []) {
@@ -161,13 +190,15 @@ const providerRows = computed<ProviderRow[]>(() => {
     rows.push({
       ...group,
       key: `${group.provider}-${rows.length}`,
+      attempt_index: 1,
+      will_retry: false,
       key_alias: group.key_alias || '',
       status: group.status || 'success',
       error: group.error || '',
       latency_ms: group.latency_ms || 0,
       result_count: group.result_count || group.results?.length || 0,
       cached: Boolean(group.cached),
-      results: group.results || []
+      results: group.status === 'success' ? group.results || [] : []
     })
   }
   return rows
@@ -192,6 +223,16 @@ function formatLatency(value: number) {
   const latency = Number(value || 0)
   if (latency >= 1000) return `${(latency / 1000).toFixed(2)}s`
   return `${latency}ms`
+}
+
+function providerCallKey(call: ProviderCallLog, index: number) {
+  return `${call.provider_name}-${call.provider_key_id || 'no-key'}-${call.attempt_index || 1}-${index}`
+}
+
+function callEmptyDescription(call: ProviderRow) {
+  if (call.error) return call.will_retry ? `${call.error}，将换 key 重试` : call.error
+  if (call.will_retry) return '本次失败，已换 key 重试'
+  return '该渠道暂无搜索结果'
 }
 
 function hasResultDetails(item: SearchResultItem) {
@@ -236,6 +277,7 @@ async function run() {
 .section-block { margin-top: 16px; }
 .section-title { margin-bottom: 8px; color: var(--text); font-weight: 800; }
 .provider-call-table { width: 100%; }
+.call-status-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .provider-call-table :deep(.el-table__expanded-cell) { padding: 10px 12px; background: rgba(47, 148, 97, .04); }
 .provider-expanded-results { max-height: 320px; overflow-y: auto; padding-right: 4px; }
 .search-result-list { display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }

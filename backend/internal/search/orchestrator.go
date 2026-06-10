@@ -23,6 +23,7 @@ type KeyPool interface {
 type Store interface {
 	GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, error)
 	RecordKeyResult(ctx context.Context, key model.APIKey, success bool, errorType string) error
+	UpdateProviderKeyOfficialQuota(ctx context.Context, id int64, quota model.ProviderKeyQuotaResult) error
 	RuntimeSettings(ctx context.Context) (model.RuntimeSettings, error)
 	ListProviders(ctx context.Context) ([]model.ProviderConfig, error)
 	RecordSearchLog(ctx context.Context, input model.SearchLogInput) error
@@ -31,13 +32,21 @@ type Store interface {
 }
 
 type Orchestrator struct {
-	registry *provider.Registry
-	keyPool  KeyPool
-	store    Store
+	registry       *provider.Registry
+	keyPool        KeyPool
+	store          Store
+	quotaMu        sync.Mutex
+	quotaRefreshes map[int64]quotaRefreshState
+}
+
+type quotaRefreshState struct {
+	inFlight     bool
+	lastStarted  time.Time
+	lastFinished time.Time
 }
 
 func NewOrchestrator(registry *provider.Registry, keyPool KeyPool, store Store) *Orchestrator {
-	return &Orchestrator{registry: registry, keyPool: keyPool, store: store}
+	return &Orchestrator{registry: registry, keyPool: keyPool, store: store, quotaRefreshes: map[int64]quotaRefreshState{}}
 }
 
 func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requestID string, apiTokenID int64) (model.SearchResponse, error) {
@@ -47,7 +56,9 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 		return model.SearchResponse{}, err
 	}
 	req = applyDefaults(req, settings)
-	providerLimits := o.providerResultLimits(ctx)
+	providerSettings := o.providerSettings(ctx)
+	providerLimits := providerResultLimits(providerSettings)
+	keyRetryCounts := providerKeyRetryCounts(providerSettings)
 	if !req.LimitExplicit && len(req.Providers) == 1 {
 		if limit := providerLimits[req.Providers[0]]; limit > 0 {
 			req.Limit = limit
@@ -93,11 +104,11 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	var providerResults []providerExecution
 	switch req.Mode {
 	case model.SearchModeFallback:
-		providerResults = o.searchFallback(ctx, req, providerLimits)
+		providerResults = o.searchFallback(ctx, req, providerLimits, keyRetryCounts)
 	case model.SearchModeSingle:
-		providerResults = o.searchSingle(ctx, req, providerLimits)
+		providerResults = o.searchSingle(ctx, req, providerLimits, keyRetryCounts)
 	default:
-		providerResults = o.searchParallel(ctx, req, providerLimits)
+		providerResults = o.searchParallel(ctx, req, providerLimits, keyRetryCounts)
 	}
 
 	results, deduped := mergeResults(providerResults, req)
@@ -149,24 +160,24 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	return response, nil
 }
 
-func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerLimits map[string]int) []providerExecution {
+func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int) []providerExecution {
 	var wg sync.WaitGroup
 	results := make([]providerExecution, len(req.Providers))
 	for index, name := range req.Providers {
 		wg.Add(1)
 		go func(i int, providerName string) {
 			defer wg.Done()
-			results[i] = o.callProvider(ctx, req, providerName, providerLimits)
+			results[i] = o.callProvider(ctx, req, providerName, providerLimits, keyRetryCounts)
 		}(index, name)
 	}
 	wg.Wait()
 	return results
 }
 
-func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerLimits map[string]int) []providerExecution {
+func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int) []providerExecution {
 	results := []providerExecution{}
 	for _, name := range req.Providers {
-		execution := o.callProvider(ctx, req, name, providerLimits)
+		execution := o.callProvider(ctx, req, name, providerLimits, keyRetryCounts)
 		results = append(results, execution)
 		if execution.err == nil && len(execution.results) > 0 {
 			break
@@ -175,48 +186,158 @@ func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchReque
 	return results
 }
 
-func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerLimits map[string]int) []providerExecution {
+func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int) []providerExecution {
 	if len(req.Providers) == 0 {
 		return nil
 	}
-	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerLimits)}
+	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerLimits, keyRetryCounts)}
 }
 
-func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerLimits map[string]int) providerExecution {
+func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerLimits map[string]int, keyRetryCounts map[string]int) providerExecution {
 	started := time.Now()
 	execution := providerExecution{provider: providerName, status: "error"}
 	adapter, ok := o.registry.Get(providerName)
 	if !ok {
-		execution.err = &provider.Error{Type: provider.ErrorTypeUpstream, Message: "provider is not registered"}
-		execution.errorType = provider.ErrorType(execution.err)
-		execution.latencyMS = time.Since(started).Milliseconds()
-		return execution
-	}
-	key, release, err := o.keyPool.Acquire(ctx, providerName)
-	if err != nil {
+		err := &provider.Error{Type: provider.ErrorTypeUpstream, Message: "provider is not registered"}
 		execution.err = err
 		execution.errorType = provider.ErrorType(err)
 		execution.latencyMS = time.Since(started).Milliseconds()
+		execution.attempts = append(execution.attempts, providerAttempt{
+			AttemptIndex: 1,
+			Status:       "error",
+			ErrorType:    execution.errorType,
+			Err:          err,
+			LatencyMS:    execution.latencyMS,
+		})
 		return execution
 	}
-	execution.key = key
-	execution.keyAlias = key.Alias
 	providerReq := req
 	if limit := providerLimits[providerName]; limit > 0 {
 		providerReq.Limit = limit
 	}
-	providerResponse, err := adapter.Search(ctx, providerReq, key)
-	success := err == nil
-	release(success, err)
-	execution.latencyMS = time.Since(started).Milliseconds()
-	if err != nil {
+	retryCount, ok := keyRetryCounts[providerName]
+	if !ok {
+		retryCount = 3
+	}
+	if retryCount < 0 {
+		retryCount = 0
+	}
+	if retryCount > 20 {
+		retryCount = 20
+	}
+	attempts := retryCount + 1
+	for attempt := 0; attempt < attempts; attempt++ {
+		attemptStarted := time.Now()
+		attemptIndex := attempt + 1
+		key, release, err := o.keyPool.Acquire(ctx, providerName)
+		if err != nil {
+			execution.err = err
+			execution.errorType = provider.ErrorType(err)
+			execution.latencyMS = time.Since(started).Milliseconds()
+			execution.attempts = append(execution.attempts, providerAttempt{
+				AttemptIndex: attemptIndex,
+				Status:       "error",
+				ErrorType:    execution.errorType,
+				Err:          err,
+				LatencyMS:    time.Since(attemptStarted).Milliseconds(),
+			})
+			return execution
+		}
+		providerResponse, err := adapter.Search(ctx, providerReq, key)
+		success := err == nil
+		release(success, err)
+		o.refreshOfficialQuota(key)
+		attemptLatency := time.Since(attemptStarted).Milliseconds()
+		execution.latencyMS = time.Since(started).Milliseconds()
+		execution.key = key
+		execution.keyAlias = key.Alias
+		if err == nil {
+			execution.status = "success"
+			execution.err = nil
+			execution.errorType = ""
+			execution.results = providerResponse.Results
+			execution.attempts = append(execution.attempts, providerAttempt{
+				Key:          key,
+				KeyAlias:     key.Alias,
+				AttemptIndex: attemptIndex,
+				Status:       "success",
+				LatencyMS:    attemptLatency,
+				ResultCount:  len(providerResponse.Results),
+			})
+			return execution
+		}
+		willRetry := attempt < attempts-1 && shouldRetryWithNextKey(err)
 		execution.err = err
 		execution.errorType = provider.ErrorType(err)
-		return execution
+		execution.attempts = append(execution.attempts, providerAttempt{
+			Key:          key,
+			KeyAlias:     key.Alias,
+			AttemptIndex: attemptIndex,
+			WillRetry:    willRetry,
+			Status:       "error",
+			ErrorType:    execution.errorType,
+			Err:          err,
+			LatencyMS:    attemptLatency,
+		})
+		if !willRetry {
+			return execution
+		}
 	}
-	execution.status = "success"
-	execution.results = providerResponse.Results
 	return execution
+}
+
+func shouldRetryWithNextKey(err error) bool {
+	switch provider.ErrorType(err) {
+	case provider.ErrorTypeAuth, provider.ErrorTypeQuotaExhausted, provider.ErrorTypeRateLimited:
+		return true
+	default:
+		return false
+	}
+}
+
+func (o *Orchestrator) refreshOfficialQuota(key model.APIKey) {
+	if key.ID == 0 {
+		return
+	}
+	now := time.Now()
+	interval := quotaRefreshInterval(key.ProviderName)
+	o.quotaMu.Lock()
+	state := o.quotaRefreshes[key.ID]
+	if state.inFlight || (!state.lastStarted.IsZero() && now.Sub(state.lastStarted) < interval) || (!state.lastFinished.IsZero() && now.Sub(state.lastFinished) < interval) {
+		o.quotaMu.Unlock()
+		return
+	}
+	state.inFlight = true
+	state.lastStarted = now
+	o.quotaRefreshes[key.ID] = state
+	o.quotaMu.Unlock()
+
+	go func() {
+		defer func() {
+			o.quotaMu.Lock()
+			state := o.quotaRefreshes[key.ID]
+			state.inFlight = false
+			state.lastFinished = time.Now()
+			o.quotaRefreshes[key.ID] = state
+			o.quotaMu.Unlock()
+		}()
+		quota, err := QueryOfficialQuota(context.Background(), key, model.ProviderKeyQuotaRequest{})
+		if err != nil {
+			quota = model.ProviderKeyQuotaResult{Provider: key.ProviderName, Alias: key.Alias, Supported: true, Status: "error", Message: err.Error(), FetchedAt: time.Now()}
+		}
+		_ = o.store.UpdateProviderKeyOfficialQuota(context.Background(), key.ID, quota)
+	}()
+}
+
+func quotaRefreshInterval(providerName string) time.Duration {
+	switch providerName {
+	case model.ProviderExa:
+		return 5 * time.Minute
+	case model.ProviderYou, model.ProviderJina:
+		return time.Minute
+	default:
+		return 5 * time.Minute
+	}
 }
 
 func applyDefaults(req model.SearchRequest, settings model.RuntimeSettings) model.SearchRequest {
@@ -319,46 +440,69 @@ func appendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
-func (o *Orchestrator) providerResultLimits(ctx context.Context) map[string]int {
+func (o *Orchestrator) providerSettings(ctx context.Context) map[string]map[string]interface{} {
 	providers, err := o.store.ListProviders(ctx)
 	if err != nil {
-		return map[string]int{}
+		return map[string]map[string]interface{}{}
 	}
-	limits := map[string]int{}
+	settings := map[string]map[string]interface{}{}
 	for _, item := range providers {
-		if limit := resultLimitFromSettings(item.Settings); limit > 0 {
-			limits[item.Name] = limit
+		settings[item.Name] = item.Settings
+	}
+	return settings
+}
+
+func providerResultLimits(settings map[string]map[string]interface{}) map[string]int {
+	limits := map[string]int{}
+	for name, item := range settings {
+		if limit := intSetting(item, "request_result_limit"); limit > 0 {
+			if limit > 50 {
+				limit = 50
+			}
+			limits[name] = limit
 		}
 	}
 	return limits
 }
 
-func resultLimitFromSettings(settings map[string]interface{}) int {
+func providerKeyRetryCounts(settings map[string]map[string]interface{}) map[string]int {
+	counts := map[string]int{}
+	for name, item := range settings {
+		count := 3
+		if _, ok := item["key_retry_count"]; ok {
+			count = intSetting(item, "key_retry_count")
+		}
+		if count < 0 {
+			count = 0
+		}
+		if count > 20 {
+			count = 20
+		}
+		counts[name] = count
+	}
+	return counts
+}
+
+func intSetting(settings map[string]interface{}, key string) int {
 	if settings == nil {
 		return 0
 	}
-	value, ok := settings["request_result_limit"]
+	value, ok := settings[key]
 	if !ok {
 		return 0
 	}
-	limit := 0
+	result := 0
 	switch typed := value.(type) {
 	case int:
-		limit = typed
+		result = typed
 	case int64:
-		limit = int(typed)
+		result = int(typed)
 	case float64:
-		limit = int(typed)
+		result = int(typed)
 	case string:
-		_, _ = fmt.Sscanf(typed, "%d", &limit)
+		_, _ = fmt.Sscanf(typed, "%d", &result)
 	}
-	if limit < 1 {
-		return 0
-	}
-	if limit > 50 {
-		return 50
-	}
-	return limit
+	return result
 }
 
 func (o *Orchestrator) cacheKey(req model.SearchRequest, providerLimits map[string]int) string {
@@ -387,6 +531,19 @@ type providerExecution struct {
 	err       error
 	latencyMS int64
 	results   []model.SearchResult
+	attempts  []providerAttempt
+}
+
+type providerAttempt struct {
+	Key          model.APIKey
+	KeyAlias     string
+	AttemptIndex int
+	WillRetry    bool
+	Status       string
+	ErrorType    string
+	Err          error
+	LatencyMS    int64
+	ResultCount  int
 }
 
 type searchResponseLogPayload struct {
@@ -394,6 +551,7 @@ type searchResponseLogPayload struct {
 	Providers       []model.ProviderCallSummary `json:"providers"`
 	Meta            model.SearchMeta            `json:"meta"`
 	ProviderResults []providerResultLog         `json:"provider_results,omitempty"`
+	ProviderCalls   []model.ProviderCallLog     `json:"provider_calls,omitempty"`
 }
 
 type providerResultLog struct {
@@ -414,6 +572,7 @@ func responseLogPayload(response model.SearchResponse, executions []providerExec
 		Providers:       response.Providers,
 		Meta:            response.Meta,
 		ProviderResults: providerResultLogs(executions),
+		ProviderCalls:   callLogs(executions),
 	}
 }
 
@@ -461,23 +620,50 @@ func summaries(executions []providerExecution) []model.ProviderCallSummary {
 }
 
 func callLogs(executions []providerExecution) []model.ProviderCallLog {
-	items := make([]model.ProviderCallLog, 0, len(executions))
+	items := []model.ProviderCallLog{}
 	for _, execution := range executions {
-		message := ""
-		if execution.err != nil {
-			message = execution.err.Error()
+		if len(execution.attempts) == 0 {
+			message := ""
+			if execution.err != nil {
+				message = execution.err.Error()
+			}
+			items = append(items, model.ProviderCallLog{
+				ProviderKeyID: execution.key.ID,
+				ProviderName:  execution.provider,
+				KeyAlias:      execution.keyAlias,
+				AttemptIndex:  1,
+				Status:        execution.status,
+				ErrorType:     execution.errorType,
+				ErrorMessage:  message,
+				LatencyMS:     execution.latencyMS,
+				ResultCount:   len(execution.results),
+				Cached:        false,
+			})
+			continue
 		}
-		items = append(items, model.ProviderCallLog{
-			ProviderKeyID: execution.key.ID,
-			ProviderName:  execution.provider,
-			KeyAlias:      execution.keyAlias,
-			Status:        execution.status,
-			ErrorType:     execution.errorType,
-			ErrorMessage:  message,
-			LatencyMS:     execution.latencyMS,
-			ResultCount:   len(execution.results),
-			Cached:        false,
-		})
+		for _, attempt := range execution.attempts {
+			message := ""
+			if attempt.Err != nil {
+				message = attempt.Err.Error()
+			}
+			attemptIndex := attempt.AttemptIndex
+			if attemptIndex <= 0 {
+				attemptIndex = 1
+			}
+			items = append(items, model.ProviderCallLog{
+				ProviderKeyID: attempt.Key.ID,
+				ProviderName:  execution.provider,
+				KeyAlias:      attempt.KeyAlias,
+				AttemptIndex:  attemptIndex,
+				WillRetry:     attempt.WillRetry,
+				Status:        attempt.Status,
+				ErrorType:     attempt.ErrorType,
+				ErrorMessage:  message,
+				LatencyMS:     attempt.LatencyMS,
+				ResultCount:   attempt.ResultCount,
+				Cached:        false,
+			})
+		}
 	}
 	return items
 }

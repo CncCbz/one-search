@@ -110,19 +110,22 @@ type ProviderConfig struct {
 }
 
 type APIKey struct {
-	ID             int64     `json:"id"`
-	ProviderID     int64     `json:"provider_id"`
-	ProviderName   string    `json:"provider_name"`
-	Alias          string    `json:"alias"`
-	Value          string    `json:"-"`
-	KeyHint        string    `json:"key_hint"`
-	Status         string    `json:"status"`
-	Weight         int       `json:"weight"`
-	RPMLimit       int       `json:"rpm_limit"`
-	DailyQuota     int       `json:"daily_quota"`
-	MonthlyQuota   int       `json:"monthly_quota"`
-	MaxConcurrency int       `json:"max_concurrency"`
-	CooldownUntil  time.Time `json:"cooldown_until,omitempty"`
+	ID                int64     `json:"id"`
+	ProviderID        int64     `json:"provider_id"`
+	ProviderName      string    `json:"provider_name"`
+	Alias             string    `json:"alias"`
+	Value             string    `json:"-"`
+	KeyHint           string    `json:"key_hint"`
+	ExaAPIKeyID       string    `json:"exa_api_key_id,omitempty"`
+	ExaServiceKey     string    `json:"-"`
+	ExaServiceKeyHint string    `json:"exa_service_key_hint,omitempty"`
+	Status            string    `json:"status"`
+	Weight            int       `json:"weight"`
+	RPMLimit          int       `json:"rpm_limit"`
+	DailyQuota        int       `json:"daily_quota"`
+	MonthlyQuota      int       `json:"monthly_quota"`
+	MaxConcurrency    int       `json:"max_concurrency"`
+	CooldownUntil     time.Time `json:"cooldown_until,omitempty"`
 }
 
 type RuntimeSettings struct {

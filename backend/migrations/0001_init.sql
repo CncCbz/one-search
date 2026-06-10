@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS provider_calls (
     provider_key_id BIGINT REFERENCES provider_keys(id) ON DELETE SET NULL,
     provider_name TEXT NOT NULL,
     key_alias TEXT NOT NULL DEFAULT '',
+    attempt_index INTEGER NOT NULL DEFAULT 1,
+    will_retry BOOLEAN NOT NULL DEFAULT FALSE,
     status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'error', 'skipped')),
     error_type TEXT NOT NULL DEFAULT '',
     error_message TEXT NOT NULL DEFAULT '',
@@ -131,9 +133,9 @@ CREATE INDEX IF NOT EXISTS idx_usage_daily_date ON usage_daily(usage_date DESC);
 
 INSERT INTO providers (name, display_name, base_url, priority, weight, timeout_ms, default_cache_enabled, cache_ttl_seconds, settings)
 VALUES
-    ('exa', 'Exa', 'https://api.exa.ai', 10, 1, 12000, FALSE, 86400, '{"type":"neural"}'::jsonb),
-    ('you', 'You.com', 'https://ydc-index.io', 20, 1, 10000, FALSE, 3600, '{}'::jsonb),
-    ('jina', 'Jina', 'https://s.jina.ai', 30, 1, 15000, FALSE, 21600, '{}'::jsonb)
+    ('exa', 'Exa', 'https://api.exa.ai', 10, 1, 12000, FALSE, 86400, '{"type":"neural","key_retry_count":3}'::jsonb),
+    ('you', 'You.com', 'https://ydc-index.io', 20, 1, 10000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
+    ('jina', 'Jina', 'https://s.jina.ai', 30, 1, 15000, FALSE, 21600, '{"key_retry_count":3}'::jsonb)
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO settings (key, value)

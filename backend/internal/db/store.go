@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v4"
@@ -124,8 +125,9 @@ func (s *Store) UpdateProvider(ctx context.Context, provider model.ProviderConfi
 
 func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName string) ([]model.APIKey, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint, k.status, k.weight,
-		       k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
+		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint,
+		       COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_ciphertext, ''), COALESCE(k.exa_service_key_hint, ''),
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
 		WHERE p.name=$1 AND p.enabled=TRUE
@@ -141,8 +143,8 @@ func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName stri
 	keys := []model.APIKey{}
 	for rows.Next() {
 		var item model.APIKey
-		var ciphertext string
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CooldownUntil); err != nil {
+		var ciphertext, exaServiceKeyCiphertext string
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CooldownUntil); err != nil {
 			return nil, err
 		}
 		plain, err := s.crypto.Decrypt(ciphertext)
@@ -150,6 +152,13 @@ func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName stri
 			return nil, fmt.Errorf("decrypt provider key %s: %w", item.Alias, err)
 		}
 		item.Value = plain
+		if exaServiceKeyCiphertext != "" {
+			exaServiceKey, err := s.crypto.Decrypt(exaServiceKeyCiphertext)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt Exa x-api-key %s: %w", item.Alias, err)
+			}
+			item.ExaServiceKey = exaServiceKey
+		}
 		keys = append(keys, item)
 	}
 	return keys, rows.Err()
@@ -157,15 +166,16 @@ func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName stri
 
 func (s *Store) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint, k.status, k.weight,
-		       k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
+		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint,
+		       COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_ciphertext, ''), COALESCE(k.exa_service_key_hint, ''),
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
 		WHERE k.id=$1
 	`, id)
 	var item model.APIKey
-	var ciphertext string
-	if err := row.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CooldownUntil); err != nil {
+	var ciphertext, exaServiceKeyCiphertext string
+	if err := row.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CooldownUntil); err != nil {
 		return model.APIKey{}, err
 	}
 	plain, err := s.crypto.Decrypt(ciphertext)
@@ -173,16 +183,29 @@ func (s *Store) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, erro
 		return model.APIKey{}, fmt.Errorf("decrypt provider key %s: %w", item.Alias, err)
 	}
 	item.Value = plain
+	if exaServiceKeyCiphertext != "" {
+		exaServiceKey, err := s.crypto.Decrypt(exaServiceKeyCiphertext)
+		if err != nil {
+			return model.APIKey{}, fmt.Errorf("decrypt Exa x-api-key %s: %w", item.Alias, err)
+		}
+		item.ExaServiceKey = exaServiceKey
+	}
 	return item, nil
 }
 
 func (s *Store) ListProviderKeys(ctx context.Context) ([]model.ProviderKeyView, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint, k.status, k.weight, k.rpm_limit,
-		       k.daily_quota, k.monthly_quota, k.max_concurrency, k.current_failures, k.total_successes,
+		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint, COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_hint, ''),
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, k.current_failures, k.total_successes,
 		       k.total_failures,
 		       COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.provider_key_id=k.id AND u.usage_date=CURRENT_DATE), 0) AS daily_used,
 		       COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.provider_key_id=k.id AND u.usage_date >= date_trunc('month', CURRENT_DATE)::date), 0) AS monthly_used,
+		       COALESCE(k.official_quota_status, ''), COALESCE(k.official_quota_message, ''), COALESCE(k.official_quota_unit, ''),
+		       COALESCE(k.official_quota_balance, 0)::float8, k.official_quota_balance IS NOT NULL,
+		       COALESCE(k.official_quota_balance_usd, 0)::float8, k.official_quota_balance_usd IS NOT NULL,
+		       COALESCE(k.official_quota_used_usd, 0)::float8, k.official_quota_used_usd IS NOT NULL,
+		       COALESCE(k.official_quota_total_quantity, 0)::float8, k.official_quota_total_quantity IS NOT NULL,
+		       COALESCE(k.official_quota_account_id, ''), k.official_quota_checked_at,
 		       k.cooldown_until, k.last_used_at, k.created_at, k.updated_at
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
@@ -196,7 +219,9 @@ func (s *Store) ListProviderKeys(ctx context.Context) ([]model.ProviderKeyView, 
 	for rows.Next() {
 		var item model.ProviderKeyView
 		var ciphertext string
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CurrentFailures, &item.TotalSuccesses, &item.TotalFailures, &item.DailyUsed, &item.MonthlyUsed, &item.CooldownUntil, &item.LastUsedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var balance, balanceUSD, usedUSD, totalQuantity float64
+		var hasBalance, hasBalanceUSD, hasUsedUSD, hasTotalQuantity bool
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CurrentFailures, &item.TotalSuccesses, &item.TotalFailures, &item.DailyUsed, &item.MonthlyUsed, &item.OfficialQuotaStatus, &item.OfficialQuotaMessage, &item.OfficialQuotaUnit, &balance, &hasBalance, &balanceUSD, &hasBalanceUSD, &usedUSD, &hasUsedUSD, &totalQuantity, &hasTotalQuantity, &item.OfficialQuotaAccountID, &item.OfficialQuotaCheckedAt, &item.CooldownUntil, &item.LastUsedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		plain, err := s.crypto.Decrypt(ciphertext)
@@ -204,22 +229,43 @@ func (s *Store) ListProviderKeys(ctx context.Context) ([]model.ProviderKeyView, 
 			return nil, fmt.Errorf("decrypt provider key %s: %w", item.Alias, err)
 		}
 		item.Key = plain
+		if hasBalance {
+			item.OfficialQuotaBalance = float64Ptr(balance)
+		}
+		if hasBalanceUSD {
+			item.OfficialQuotaBalanceUSD = float64Ptr(balanceUSD)
+		}
+		if hasUsedUSD {
+			item.OfficialQuotaUsedUSD = float64Ptr(usedUSD)
+		}
+		if hasTotalQuantity {
+			item.OfficialQuotaTotalQuantity = float64Ptr(totalQuantity)
+		}
 		keys = append(keys, item)
 	}
 	return keys, rows.Err()
 }
 
-func (s *Store) CreateProviderKey(ctx context.Context, providerName, alias, plainKey string, weight, rpmLimit, dailyQuota, monthlyQuota, maxConcurrency int) (model.ProviderKeyView, error) {
+func (s *Store) CreateProviderKey(ctx context.Context, providerName, alias, plainKey, exaAPIKeyID, exaServiceKey string, weight, rpmLimit, dailyQuota, monthlyQuota, maxConcurrency int) (model.ProviderKeyView, error) {
 	ciphertext, err := s.crypto.Encrypt(plainKey)
 	if err != nil {
 		return model.ProviderKeyView{}, err
 	}
 	keyHint := security.MaskSecret(plainKey)
+	exaServiceKeyCiphertext := ""
+	exaServiceKeyHint := ""
+	if strings.TrimSpace(exaServiceKey) != "" {
+		exaServiceKeyCiphertext, err = s.crypto.Encrypt(strings.TrimSpace(exaServiceKey))
+		if err != nil {
+			return model.ProviderKeyView{}, err
+		}
+		exaServiceKeyHint = security.MaskSecret(strings.TrimSpace(exaServiceKey))
+	}
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO provider_keys (provider_id, alias, key_ciphertext, key_hint, weight, rpm_limit, daily_quota, monthly_quota, max_concurrency)
-		SELECT id, $2, $3, $4, $5, $6, $7, $8, $9 FROM providers WHERE name=$1
+		INSERT INTO provider_keys (provider_id, alias, key_ciphertext, key_hint, exa_api_key_id, exa_service_key_ciphertext, exa_service_key_hint, weight, rpm_limit, daily_quota, monthly_quota, max_concurrency)
+		SELECT id, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12 FROM providers WHERE name=$1
 		RETURNING id
-	`, providerName, alias, ciphertext, keyHint, weightOrDefault(weight), rpmLimit, dailyQuota, monthlyQuota, concurrencyOrDefault(maxConcurrency))
+	`, providerName, alias, ciphertext, keyHint, strings.TrimSpace(exaAPIKeyID), exaServiceKeyCiphertext, exaServiceKeyHint, weightOrDefault(weight), rpmLimit, dailyQuota, monthlyQuota, concurrencyOrDefault(maxConcurrency))
 	var id int64
 	if err := row.Scan(&id); err != nil {
 		return model.ProviderKeyView{}, err
@@ -252,21 +298,38 @@ func (s *Store) UpdateProviderKey(ctx context.Context, id int64, patch model.Pro
 		ciphertext = crypted
 		keyHint = security.MaskSecret(*patch.Key)
 	}
+	var exaAPIKeyID interface{}
+	if patch.ExaAPIKeyID != nil && strings.TrimSpace(*patch.ExaAPIKeyID) != "" {
+		exaAPIKeyID = strings.TrimSpace(*patch.ExaAPIKeyID)
+	}
+	var exaServiceKeyCiphertext interface{}
+	var exaServiceKeyHint interface{}
+	if patch.ExaServiceKey != nil && strings.TrimSpace(*patch.ExaServiceKey) != "" {
+		crypted, err := s.crypto.Encrypt(strings.TrimSpace(*patch.ExaServiceKey))
+		if err != nil {
+			return model.ProviderKeyView{}, err
+		}
+		exaServiceKeyCiphertext = crypted
+		exaServiceKeyHint = security.MaskSecret(strings.TrimSpace(*patch.ExaServiceKey))
+	}
 
 	_, err := s.pool.Exec(ctx, `
 		UPDATE provider_keys
 		SET alias=COALESCE($2::text, alias),
 		    key_ciphertext=COALESCE($3::text, key_ciphertext),
 		    key_hint=COALESCE($4::text, key_hint),
-		    status=COALESCE($5::text, status),
-		    weight=COALESCE($6::int, weight),
-		    rpm_limit=COALESCE($7::int, rpm_limit),
-		    daily_quota=COALESCE($8::int, daily_quota),
-		    monthly_quota=COALESCE($9::int, monthly_quota),
-		    max_concurrency=COALESCE($10::int, max_concurrency),
+		    exa_api_key_id=COALESCE($5::text, exa_api_key_id),
+		    exa_service_key_ciphertext=COALESCE($6::text, exa_service_key_ciphertext),
+		    exa_service_key_hint=COALESCE($7::text, exa_service_key_hint),
+		    status=COALESCE($8::text, status),
+		    weight=COALESCE($9::int, weight),
+		    rpm_limit=COALESCE($10::int, rpm_limit),
+		    daily_quota=COALESCE($11::int, daily_quota),
+		    monthly_quota=COALESCE($12::int, monthly_quota),
+		    max_concurrency=COALESCE($13::int, max_concurrency),
 		    updated_at=now()
 		WHERE id=$1
-	`, id, stringPtrValue(patch.Alias), ciphertext, keyHint, stringPtrValue(patch.Status), intPtrValue(patch.Weight), intPtrValue(patch.RPMLimit), intPtrValue(patch.DailyQuota), intPtrValue(patch.MonthlyQuota), intPtrValue(patch.MaxConcurrency))
+	`, id, stringPtrValue(patch.Alias), ciphertext, keyHint, exaAPIKeyID, exaServiceKeyCiphertext, exaServiceKeyHint, stringPtrValue(patch.Status), intPtrValue(patch.Weight), intPtrValue(patch.RPMLimit), intPtrValue(patch.DailyQuota), intPtrValue(patch.MonthlyQuota), intPtrValue(patch.MaxConcurrency))
 	if err != nil {
 		return model.ProviderKeyView{}, err
 	}
@@ -287,7 +350,41 @@ func (s *Store) GetProviderKey(ctx context.Context, id int64) (model.ProviderKey
 }
 
 func (s *Store) DeleteProviderKey(ctx context.Context, id int64) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM provider_keys WHERE id=$1`, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM usage_daily WHERE provider_key_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM provider_keys WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) UpdateProviderKeyOfficialQuota(ctx context.Context, id int64, quota model.ProviderKeyQuotaResult) error {
+	message := quota.Message
+	if message == "" && quota.Status == "error" {
+		message = "official quota query failed"
+	}
+	exhausted := quota.Status == "success" && (quota.Provider == model.ProviderJina || quota.Provider == model.ProviderYou) && quota.Balance != nil && *quota.Balance <= 0
+	_, err := s.pool.Exec(ctx, `
+		UPDATE provider_keys
+		SET official_quota_status=$2,
+		    official_quota_message=$3,
+		    official_quota_unit=$4,
+		    official_quota_balance=$5,
+		    official_quota_balance_usd=$6,
+		    official_quota_used_usd=$7,
+		    official_quota_total_quantity=$8,
+		    official_quota_account_id=$9,
+		    official_quota_checked_at=$10,
+		    status=CASE WHEN $11 THEN 'exhausted' ELSE status END,
+		    updated_at=now()
+		WHERE id=$1
+	`, id, quota.Status, message, quota.Unit, floatPtrValue(quota.Balance), floatPtrValue(quota.BalanceUSD), floatPtrValue(quota.TotalCostUSD), floatPtrValue(quota.TotalQuantity), quota.AccountID, quota.FetchedAt, exhausted)
 	return err
 }
 
@@ -300,6 +397,8 @@ func (s *Store) RecordKeyResult(ctx context.Context, key model.APIKey, success b
 		switch errorType {
 		case "auth":
 			status = "disabled"
+		case "quota_exhausted":
+			status = "exhausted"
 		case "rate_limited":
 			status = "cooling"
 			until := time.Now().Add(15 * time.Minute)
@@ -442,10 +541,14 @@ func (s *Store) RecordSearchLog(ctx context.Context, input model.SearchLogInput)
 		if call.ProviderKeyID > 0 {
 			providerKey = call.ProviderKeyID
 		}
+		attemptIndex := call.AttemptIndex
+		if attemptIndex <= 0 {
+			attemptIndex = 1
+		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO provider_calls (search_request_id, request_id, provider_key_id, provider_name, key_alias, status, error_type, error_message, latency_ms, result_count, cached)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		`, searchRequestID, input.RequestID, providerKey, call.ProviderName, call.KeyAlias, call.Status, call.ErrorType, call.ErrorMessage, int(call.LatencyMS), call.ResultCount, call.Cached)
+			INSERT INTO provider_calls (search_request_id, request_id, provider_key_id, provider_name, key_alias, attempt_index, will_retry, status, error_type, error_message, latency_ms, result_count, cached)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		`, searchRequestID, input.RequestID, providerKey, call.ProviderName, call.KeyAlias, attemptIndex, call.WillRetry, call.Status, call.ErrorType, call.ErrorMessage, int(call.LatencyMS), call.ResultCount, call.Cached)
 		if err != nil {
 			return err
 		}
@@ -487,6 +590,9 @@ func upsertUsage(ctx context.Context, tx pgx.Tx, input model.SearchLogInput) err
 		return err
 	}
 	for _, call := range input.Calls {
+		if call.ProviderKeyID <= 0 {
+			continue
+		}
 		callSuccess := 0
 		callFailed := 0
 		if call.Status == "success" {
@@ -498,10 +604,6 @@ func upsertUsage(ctx context.Context, tx pgx.Tx, input model.SearchLogInput) err
 		if call.Cached {
 			callCacheHits = 1
 		}
-		var providerKey interface{}
-		if call.ProviderKeyID > 0 {
-			providerKey = call.ProviderKeyID
-		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO usage_daily (usage_date, api_token_id, provider_key_id, requests_total, requests_success, requests_failed, cache_hits, results_total, latency_ms_total)
 			VALUES (CURRENT_DATE, $1, $2, 1, $3, $4, $5, $6, $7)
@@ -512,7 +614,7 @@ func upsertUsage(ctx context.Context, tx pgx.Tx, input model.SearchLogInput) err
 			cache_hits=usage_daily.cache_hits+$5,
 			results_total=usage_daily.results_total+$6,
 			latency_ms_total=usage_daily.latency_ms_total+$7
-		`, apiToken, providerKey, callSuccess, callFailed, callCacheHits, call.ResultCount, int(call.LatencyMS))
+		`, apiToken, call.ProviderKeyID, callSuccess, callFailed, callCacheHits, call.ResultCount, int(call.LatencyMS))
 		if err != nil {
 			return err
 		}
@@ -561,7 +663,7 @@ func (s *Store) getSearchLog(ctx context.Context, field string, value interface{
 		return model.SearchLog{}, nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT COALESCE(provider_key_id, 0), provider_name, key_alias, status, error_type, error_message, latency_ms, result_count, cached
+		SELECT COALESCE(provider_key_id, 0), provider_name, key_alias, attempt_index, will_retry, status, error_type, error_message, latency_ms, result_count, cached
 		FROM provider_calls WHERE search_request_id=$1 ORDER BY id ASC
 	`, item.ID)
 	if err != nil {
@@ -571,7 +673,7 @@ func (s *Store) getSearchLog(ctx context.Context, field string, value interface{
 	calls := []model.ProviderCallLog{}
 	for rows.Next() {
 		var call model.ProviderCallLog
-		if err := rows.Scan(&call.ProviderKeyID, &call.ProviderName, &call.KeyAlias, &call.Status, &call.ErrorType, &call.ErrorMessage, &call.LatencyMS, &call.ResultCount, &call.Cached); err != nil {
+		if err := rows.Scan(&call.ProviderKeyID, &call.ProviderName, &call.KeyAlias, &call.AttemptIndex, &call.WillRetry, &call.Status, &call.ErrorType, &call.ErrorMessage, &call.LatencyMS, &call.ResultCount, &call.Cached); err != nil {
 			return model.SearchLog{}, nil, err
 		}
 		calls = append(calls, call)
@@ -656,4 +758,15 @@ func intPtrValue(value *int) interface{} {
 		return nil
 	}
 	return *value
+}
+
+func floatPtrValue(value *float64) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func float64Ptr(value float64) *float64 {
+	return &value
 }

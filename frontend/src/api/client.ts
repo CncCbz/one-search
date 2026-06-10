@@ -33,6 +33,8 @@ export interface ProviderKey {
   alias: string
   key_hint: string
   key: string
+  exa_api_key_id?: string
+  exa_service_key_hint?: string
   status: string
   weight: number
   rpm_limit: number
@@ -44,10 +46,40 @@ export interface ProviderKey {
   total_failures: number
   daily_used: number
   monthly_used: number
+  official_quota_status: string
+  official_quota_message: string
+  official_quota_unit: string
+  official_quota_balance?: number
+  official_quota_balance_usd?: number
+  official_quota_used_usd?: number
+  official_quota_total_quantity?: number
+  official_quota_account_id?: string
+  official_quota_checked_at?: string
   cooldown_until?: string
   last_used_at?: string
   created_at: string
   updated_at: string
+}
+
+export interface OfficialQuotaResult {
+  provider: string
+  alias: string
+  supported: boolean
+  status: string
+  message?: string
+  unit?: string
+  balance?: number
+  balance_cents?: number
+  balance_usd?: number
+  total_cost_usd?: number
+  total_quantity?: number
+  api_key_id?: string
+  api_key_name?: string
+  account_id?: string
+  period?: { start?: string; end?: string }
+  breakdown?: Record<string, unknown>[]
+  raw_text?: string
+  fetched_at: string
 }
 
 export interface ApiToken {
@@ -103,6 +135,8 @@ export interface ProviderCallLog {
   provider_key_id: number
   provider_name: string
   key_alias: string
+  attempt_index?: number
+  will_retry?: boolean
   status: string
   error_type: string
   error_message: string
@@ -136,6 +170,7 @@ export const api = {
   updateKey: (id: number, payload: Record<string, unknown>) => apiFetch<ProviderKey>('/api/admin/keys/' + id, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteKey: (id: number) => apiFetch('/api/admin/keys/' + id, { method: 'DELETE' }),
   testKey: (id: number, payload: Record<string, unknown>) => apiFetch('/api/admin/keys/' + id + '/test', { method: 'POST', body: JSON.stringify(payload) }),
+  queryKeyQuota: (id: number, payload: Record<string, unknown> = {}) => apiFetch<OfficialQuotaResult>('/api/admin/keys/' + id + '/quota', { method: 'POST', body: JSON.stringify(payload) }),
   tokens: () => apiFetch<{ tokens: ApiToken[] }>('/api/admin/tokens'),
   createToken: (payload: Record<string, unknown>) => apiFetch<{ token: ApiToken; raw_token: string }>('/api/admin/tokens', { method: 'POST', body: JSON.stringify(payload) }),
   updateToken: (id: number, payload: Record<string, unknown>) => apiFetch('/api/admin/tokens/' + id, { method: 'PATCH', body: JSON.stringify(payload) }),

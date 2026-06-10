@@ -1,0 +1,12 @@
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS exa_api_key_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS exa_service_key_ciphertext TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS exa_service_key_hint TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_message TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_unit TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_balance NUMERIC;
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_balance_usd NUMERIC;
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_used_usd NUMERIC;
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_total_quantity NUMERIC;
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_account_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS official_quota_checked_at TIMESTAMPTZ;

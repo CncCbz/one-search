@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/one-search/one-search/backend/internal/compat"
@@ -20,7 +21,9 @@ type AppStore interface {
 	ListProviders(ctx context.Context) ([]model.ProviderConfig, error)
 	UpdateProvider(ctx context.Context, provider model.ProviderConfig) error
 	ListProviderKeys(ctx context.Context) ([]model.ProviderKeyView, error)
-	CreateProviderKey(ctx context.Context, providerName, alias, plainKey string, weight, rpmLimit, dailyQuota, monthlyQuota, maxConcurrency int) (model.ProviderKeyView, error)
+	GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, error)
+	CreateProviderKey(ctx context.Context, providerName, alias, plainKey, exaAPIKeyID, exaServiceKey string, weight, rpmLimit, dailyQuota, monthlyQuota, maxConcurrency int) (model.ProviderKeyView, error)
+	UpdateProviderKeyOfficialQuota(ctx context.Context, id int64, quota model.ProviderKeyQuotaResult) error
 	UpdateProviderKeyStatus(ctx context.Context, id int64, status string) error
 	UpdateProviderKey(ctx context.Context, id int64, patch model.ProviderKeyUpdate) (model.ProviderKeyView, error)
 	DeleteProviderKey(ctx context.Context, id int64) error
@@ -68,6 +71,7 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Post("/keys", h.createKey)
 			r.Patch("/keys/{id}", h.updateKey)
 			r.Post("/keys/{id}/test", h.testKey)
+			r.Post("/keys/{id}/quota", h.keyQuota)
 			r.Delete("/keys/{id}", h.deleteKey)
 			r.Get("/tokens", h.listTokens)
 			r.Post("/tokens", h.createToken)
@@ -310,6 +314,8 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		ProviderName   string `json:"provider_name"`
 		Alias          string `json:"alias"`
 		Key            string `json:"key"`
+		ExaAPIKeyID    string `json:"exa_api_key_id"`
+		ExaServiceKey  string `json:"exa_service_key"`
 		Weight         int    `json:"weight"`
 		RPMLimit       int    `json:"rpm_limit"`
 		DailyQuota     int    `json:"daily_quota"`
@@ -320,7 +326,11 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	key, err := h.store.CreateProviderKey(r.Context(), req.ProviderName, req.Alias, req.Key, req.Weight, req.RPMLimit, req.DailyQuota, req.MonthlyQuota, req.MaxConcurrency)
+	if req.ProviderName == model.ProviderExa && strings.TrimSpace(req.ExaServiceKey) == "" {
+		writeError(w, http.StatusBadRequest, "Exa x-api-key is required")
+		return
+	}
+	key, err := h.store.CreateProviderKey(r.Context(), req.ProviderName, req.Alias, req.Key, req.ExaAPIKeyID, req.ExaServiceKey, req.Weight, req.RPMLimit, req.DailyQuota, req.MonthlyQuota, req.MaxConcurrency)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
