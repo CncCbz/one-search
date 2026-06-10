@@ -25,6 +25,8 @@ body {
 
 .layout-shell { min-height: 100vh; }
 .side-nav {
+  display: flex;
+  flex-direction: column;
   padding: 18px 12px;
   background: rgba(255, 255, 255, 0.62);
   border-right: 1px solid var(--border);
@@ -34,11 +36,12 @@ body {
 .brand-logo { width: 42px; height: 42px; display: grid; place-items: center; border-radius: var(--el-border-radius-base); background: var(--primary); color: #fff; font-weight: 800; box-shadow: 0 12px 28px rgba(47, 148, 97, 0.24); }
 .brand-title { font-size: 17px; font-weight: 800; }
 .brand-subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
-.nav-menu { border-right: 0 !important; background: transparent !important; }
+.nav-menu { flex: 1; border-right: 0 !important; background: transparent !important; }
 .nav-menu .el-menu-item { border-radius: var(--el-border-radius-base); margin: 5px 0; color: var(--text); }
 .nav-menu .el-menu-item.is-active { background: var(--primary-soft); color: var(--primary); font-weight: 700; }
-.topbar { display: flex; align-items: center; justify-content: flex-end; height: 64px; padding: 0 28px; background: transparent; }
-.page-main { padding: 0 28px 28px; }
+.nav-footer { margin-top: auto; padding: 16px 4px 0; border-top: 1px solid var(--border); }
+.logout-button { width: 100%; justify-content: flex-start; }
+.page-main { padding: 28px; }
 .page-actions { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 16px; }
 .metric-card, .soft-card {
   border: 1px solid var(--border) !important;

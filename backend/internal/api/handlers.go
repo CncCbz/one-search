@@ -32,6 +32,7 @@ type AppStore interface {
 	UpdateRuntimeSettings(ctx context.Context, settings model.RuntimeSettings) error
 	ListSearchLogs(ctx context.Context, limit int) ([]model.SearchLog, error)
 	GetSearchLog(ctx context.Context, id int64) (model.SearchLog, []model.ProviderCallLog, error)
+	GetSearchLogByRequestID(ctx context.Context, requestID string) (model.SearchLog, []model.ProviderCallLog, error)
 	UsageSummary(ctx context.Context) (model.UsageSummary, error)
 }
 
@@ -105,10 +106,18 @@ func (h *Handler) adminSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.CompatFormat = model.CompatFormatNative
-	response, err := h.orchestrator.Search(r.Context(), req, RequestID(r.Context()), 0)
+	requestID := RequestID(r.Context())
+	response, err := h.orchestrator.Search(r.Context(), req, requestID, 0)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if log, _, err := h.store.GetSearchLogByRequestID(r.Context(), requestID); err == nil && len(log.ResponseJSON) > 0 {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(log.ResponseJSON, &payload); err == nil {
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }

@@ -544,18 +544,26 @@ func (s *Store) ListSearchLogs(ctx context.Context, limit int) ([]model.SearchLo
 }
 
 func (s *Store) GetSearchLog(ctx context.Context, id int64) (model.SearchLog, []model.ProviderCallLog, error) {
-	row := s.pool.QueryRow(ctx, `
+	return s.getSearchLog(ctx, "id", id)
+}
+
+func (s *Store) GetSearchLogByRequestID(ctx context.Context, requestID string) (model.SearchLog, []model.ProviderCallLog, error) {
+	return s.getSearchLog(ctx, "request_id", requestID)
+}
+
+func (s *Store) getSearchLog(ctx context.Context, field string, value interface{}) (model.SearchLog, []model.ProviderCallLog, error) {
+	row := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT id, request_id, query, mode, compat_format, providers, cache_policy, cache_hit, result_count, status, error_message, latency_ms, request_json, response_json, created_at
-		FROM search_requests WHERE id=$1
-	`, id)
+		FROM search_requests WHERE %s=$1
+	`, field), value)
 	var item model.SearchLog
 	if err := row.Scan(&item.ID, &item.RequestID, &item.Query, &item.Mode, &item.CompatFormat, &item.Providers, &item.CachePolicy, &item.CacheHit, &item.ResultCount, &item.Status, &item.ErrorMessage, &item.LatencyMS, &item.RequestJSON, &item.ResponseJSON, &item.CreatedAt); err != nil {
 		return model.SearchLog{}, nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT provider_key_id, provider_name, key_alias, status, error_type, error_message, latency_ms, result_count, cached
+		SELECT COALESCE(provider_key_id, 0), provider_name, key_alias, status, error_type, error_message, latency_ms, result_count, cached
 		FROM provider_calls WHERE search_request_id=$1 ORDER BY id ASC
-	`, id)
+	`, item.ID)
 	if err != nil {
 		return model.SearchLog{}, nil, err
 	}

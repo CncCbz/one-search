@@ -25,7 +25,7 @@ type Config struct {
 }
 
 func Load() Config {
-	_ = godotenv.Load()
+	loadEnvFiles()
 	return Config{
 		AppEnv:            getString("APP_ENV", "development"),
 		HTTPAddr:          getString("HTTP_ADDR", ":8080"),
@@ -40,6 +40,24 @@ func Load() Config {
 		UpstreamUserAgent: getString("UPSTREAM_USER_AGENT", "OneSearchRelay/0.1"),
 		RequestTimeout:    time.Duration(getInt("REQUEST_TIMEOUT_MS", 20000)) * time.Millisecond,
 	}
+}
+
+func loadEnvFiles() {
+	loadEnvFile(".env", false)
+	loadEnvFile("../.env", false)
+	loadEnvFile(".env.development", true)
+	loadEnvFile("../.env.development", true)
+}
+
+func loadEnvFile(path string, overwrite bool) {
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	if overwrite {
+		_ = godotenv.Overload(path)
+		return
+	}
+	_ = godotenv.Load(path)
 }
 
 func getString(key, fallback string) string {

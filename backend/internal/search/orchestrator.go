@@ -123,7 +123,7 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 		},
 	}
 	requestJSON, _ := json.Marshal(req)
-	responseJSON, _ := json.Marshal(response)
+	responseJSON, _ := json.Marshal(responseLogPayload(response, providerResults))
 	_ = o.store.RecordSearchLog(context.Background(), model.SearchLogInput{
 		RequestID:    requestID,
 		APITokenID:   apiTokenID,
@@ -387,6 +387,56 @@ type providerExecution struct {
 	err       error
 	latencyMS int64
 	results   []model.SearchResult
+}
+
+type searchResponseLogPayload struct {
+	Results         []model.SearchResult        `json:"results"`
+	Providers       []model.ProviderCallSummary `json:"providers"`
+	Meta            model.SearchMeta            `json:"meta"`
+	ProviderResults []providerResultLog         `json:"provider_results,omitempty"`
+}
+
+type providerResultLog struct {
+	Provider    string               `json:"provider"`
+	KeyAlias    string               `json:"key_alias,omitempty"`
+	Status      string               `json:"status"`
+	ErrorType   string               `json:"error_type,omitempty"`
+	Error       string               `json:"error,omitempty"`
+	LatencyMS   int64                `json:"latency_ms"`
+	ResultCount int                  `json:"result_count"`
+	Cached      bool                 `json:"cached"`
+	Results     []model.SearchResult `json:"results"`
+}
+
+func responseLogPayload(response model.SearchResponse, executions []providerExecution) searchResponseLogPayload {
+	return searchResponseLogPayload{
+		Results:         response.Results,
+		Providers:       response.Providers,
+		Meta:            response.Meta,
+		ProviderResults: providerResultLogs(executions),
+	}
+}
+
+func providerResultLogs(executions []providerExecution) []providerResultLog {
+	items := make([]providerResultLog, 0, len(executions))
+	for _, execution := range executions {
+		message := ""
+		if execution.err != nil {
+			message = execution.err.Error()
+		}
+		items = append(items, providerResultLog{
+			Provider:    execution.provider,
+			KeyAlias:    execution.keyAlias,
+			Status:      execution.status,
+			ErrorType:   execution.errorType,
+			Error:       message,
+			LatencyMS:   execution.latencyMS,
+			ResultCount: len(execution.results),
+			Cached:      false,
+			Results:     execution.results,
+		})
+	}
+	return items
 }
 
 func summaries(executions []providerExecution) []model.ProviderCallSummary {

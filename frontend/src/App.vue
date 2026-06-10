@@ -17,11 +17,13 @@
         <el-menu-item index="/logs">请求日志</el-menu-item>
         <el-menu-item index="/settings">系统设置</el-menu-item>
       </el-menu>
+      <div class="nav-footer">
+        <el-button :icon="SwitchButton" class="logout-button" title="退出登录" @click="logout">
+          退出登录
+        </el-button>
+      </div>
     </el-aside>
     <el-container>
-      <el-header class="topbar">
-        <el-button circle :icon="SwitchButton" title="退出登录" @click="logout" />
-      </el-header>
       <el-main class="page-main">
         <router-view />
       </el-main>
