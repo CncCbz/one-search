@@ -147,6 +147,13 @@ export interface ApiToken {
   updated_at: string
 }
 
+export interface AdminAPIKey {
+  key?: string
+  key_prefix: string
+  created_at?: string
+  updated_at?: string
+}
+
 export interface RuntimeSettings {
   default_mode: string
   default_providers: string[]
@@ -230,6 +237,8 @@ export const api = {
   deleteToken: (id: number) => apiFetch('/api/admin/tokens/' + id, { method: 'DELETE' }),
   settings: () => apiFetch<RuntimeSettings>('/api/admin/settings'),
   updateSettings: (payload: RuntimeSettings) => apiFetch<RuntimeSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  adminAPIKey: () => apiFetch<AdminAPIKey>('/api/admin/settings/admin-api-key'),
+  rotateAdminAPIKey: () => apiFetch<AdminAPIKey>('/api/admin/settings/admin-api-key', { method: 'POST' }),
   logs: () => apiFetch<{ logs: SearchLog[] }>('/api/admin/logs?limit=100'),
   logDetail: (id: number) => apiFetch<{ log: SearchLog; calls: ProviderCallLog[] }>('/api/admin/logs/' + id),
   usageSummary: () => apiFetch<UsageSummary>('/api/admin/usage/summary'),

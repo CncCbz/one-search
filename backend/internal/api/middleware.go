@@ -17,6 +17,7 @@ const (
 	requestIDKey  contextKey = "request_id"
 	apiTokenIDKey contextKey = "api_token_id"
 	apiTokenKey   contextKey = "api_token"
+	adminActorKey contextKey = "admin_actor"
 )
 
 func requestIDMiddleware(next http.Handler) http.Handler {
@@ -105,6 +106,14 @@ func APITokenID(ctx context.Context) int64 {
 func APIToken(ctx context.Context) (model.APIToken, bool) {
 	value, ok := ctx.Value(apiTokenKey).(model.APIToken)
 	return value, ok
+}
+
+func AdminActor(ctx context.Context) string {
+	value, _ := ctx.Value(adminActorKey).(string)
+	if value == "" {
+		return "admin"
+	}
+	return value
 }
 
 func bearerToken(r *http.Request) string {

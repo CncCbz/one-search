@@ -32,6 +32,8 @@ type AppStore interface {
 	UpdateAPITokenStatus(ctx context.Context, id int64, status string) error
 	UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota, monthlyQuota int) error
 	DeleteAPIToken(ctx context.Context, id int64) error
+	GetAdminAPIKey(ctx context.Context) (model.AdminAPIKey, error)
+	RotateAdminAPIKey(ctx context.Context) (model.AdminAPIKey, string, error)
 	UpdateRuntimeSettings(ctx context.Context, settings model.RuntimeSettings) error
 	ListSearchLogs(ctx context.Context, limit int) ([]model.SearchLog, error)
 	GetSearchLog(ctx context.Context, id int64) (model.SearchLog, []model.ProviderCallLog, error)
@@ -84,6 +86,8 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Delete("/tokens/{id}", h.deleteToken)
 			r.Get("/settings", h.getSettings)
 			r.Put("/settings", h.updateSettings)
+			r.Get("/settings/admin-api-key", h.getAdminAPIKey)
+			r.Post("/settings/admin-api-key", h.rotateAdminAPIKey)
 			r.Get("/logs", h.logs)
 			r.Get("/logs/{id}", h.logDetail)
 			r.Get("/usage/summary", h.usageSummary)
@@ -555,6 +559,25 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, settings)
 }
 
+func (h *Handler) getAdminAPIKey(w http.ResponseWriter, r *http.Request) {
+	key, err := h.store.GetAdminAPIKey(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, key)
+}
+
+func (h *Handler) rotateAdminAPIKey(w http.ResponseWriter, r *http.Request) {
+	key, _, err := h.store.RotateAdminAPIKey(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit(r, AdminActor(r.Context()), "settings.admin_api_key.rotate", "settings", "admin_api_key", map[string]interface{}{"key_prefix": key.KeyPrefix})
+	writeJSON(w, http.StatusCreated, key)
+}
+
 func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 	var settings model.RuntimeSettings
 	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
@@ -614,6 +637,9 @@ func hasJSONField(body []byte, field string) bool {
 func (h *Handler) audit(r *http.Request, actor, action, resourceType, resourceID string, metadata map[string]interface{}) {
 	if action == "" {
 		return
+	}
+	if actor == "" || actor == "admin" {
+		actor = AdminActor(r.Context())
 	}
 	_ = h.store.RecordAuditLog(context.Background(), model.AuditLogInput{
 		RequestID:    RequestID(r.Context()),

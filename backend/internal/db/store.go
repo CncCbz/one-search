@@ -41,6 +41,65 @@ func (s *Store) GetAdminByUsername(ctx context.Context, username string) (model.
 	return user, nil
 }
 
+func (s *Store) GetAdminAPIKey(ctx context.Context) (model.AdminAPIKey, error) {
+	row := s.pool.QueryRow(ctx, `SELECT key_prefix, created_at, updated_at FROM admin_api_keys WHERE id=TRUE`)
+	var item model.AdminAPIKey
+	var createdAt, updatedAt time.Time
+	if err := row.Scan(&item.KeyPrefix, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.AdminAPIKey{}, nil
+		}
+		return model.AdminAPIKey{}, err
+	}
+	item.CreatedAt = &createdAt
+	item.UpdatedAt = &updatedAt
+	return item, nil
+}
+
+func (s *Store) RotateAdminAPIKey(ctx context.Context) (model.AdminAPIKey, string, error) {
+	rawToken, err := security.RandomToken("oak_")
+	if err != nil {
+		return model.AdminAPIKey{}, "", err
+	}
+	ciphertext, err := s.crypto.Encrypt(rawToken)
+	if err != nil {
+		return model.AdminAPIKey{}, "", err
+	}
+	hash := security.HashToken(rawToken)
+	prefix := security.TokenPrefix(rawToken)
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO admin_api_keys (id, key_hash, key_ciphertext, key_prefix)
+		VALUES (TRUE, $1, $2, $3)
+		ON CONFLICT (id) DO UPDATE SET key_hash=EXCLUDED.key_hash, key_ciphertext=EXCLUDED.key_ciphertext, key_prefix=EXCLUDED.key_prefix, updated_at=now()
+		RETURNING key_prefix, created_at, updated_at
+	`, hash, ciphertext, prefix)
+	var item model.AdminAPIKey
+	var createdAt, updatedAt time.Time
+	if err := row.Scan(&item.KeyPrefix, &createdAt, &updatedAt); err != nil {
+		return model.AdminAPIKey{}, "", err
+	}
+	item.Key = rawToken
+	item.CreatedAt = &createdAt
+	item.UpdatedAt = &updatedAt
+	return item, rawToken, nil
+}
+
+func (s *Store) FindAdminAPIKey(ctx context.Context, token string) (model.AdminAPIKey, bool, error) {
+	hash := security.HashToken(token)
+	row := s.pool.QueryRow(ctx, `SELECT key_prefix, created_at, updated_at FROM admin_api_keys WHERE key_hash=$1`, hash)
+	var item model.AdminAPIKey
+	var createdAt, updatedAt time.Time
+	if err := row.Scan(&item.KeyPrefix, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.AdminAPIKey{}, false, nil
+		}
+		return model.AdminAPIKey{}, false, err
+	}
+	item.CreatedAt = &createdAt
+	item.UpdatedAt = &updatedAt
+	return item, true, nil
+}
+
 func (s *Store) RuntimeSettings(ctx context.Context) (model.RuntimeSettings, error) {
 	settings := model.RuntimeSettings{
 		DefaultMode:                 model.SearchModeParallel,

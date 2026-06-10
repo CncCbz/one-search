@@ -13,6 +13,7 @@ import (
 
 type AuthStore interface {
 	GetAdminByUsername(ctx context.Context, username string) (model.AdminUser, error)
+	FindAdminAPIKey(ctx context.Context, token string) (model.AdminAPIKey, bool, error)
 	FindAPIToken(ctx context.Context, token string) (model.APIToken, error)
 	RuntimeSettings(ctx context.Context) (model.RuntimeSettings, error)
 }
@@ -59,11 +60,24 @@ func (a *AuthService) Login(ctx context.Context, username, password string) (str
 func (a *AuthService) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
-		if token == "" || !a.validSession(token) {
-			writeError(w, http.StatusUnauthorized, "admin login required")
+		if token != "" && a.validSession(token) {
+			ctx := context.WithValue(r.Context(), adminActorKey, "admin")
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		next.ServeHTTP(w, r)
+		if token != "" {
+			adminKey, ok, err := a.store.FindAdminAPIKey(r.Context(), token)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if ok {
+				ctx := context.WithValue(r.Context(), adminActorKey, adminAPIKeyActor(adminKey))
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		writeError(w, http.StatusUnauthorized, "admin login required")
 	})
 }
 
@@ -83,6 +97,16 @@ func (a *AuthService) requireAPIToken(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "api token required")
 			return
 		}
+		adminKey, ok, err := a.store.FindAdminAPIKey(r.Context(), token)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if ok {
+			ctx := context.WithValue(r.Context(), adminActorKey, adminAPIKeyActor(adminKey))
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		apiToken, err := a.store.FindAPIToken(r.Context(), token)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid api token")
@@ -96,6 +120,13 @@ func (a *AuthService) requireAPIToken(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, apiTokenKey, apiToken)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func adminAPIKeyActor(key model.AdminAPIKey) string {
+	if key.KeyPrefix == "" {
+		return "admin_api_key"
+	}
+	return "admin_api_key:" + key.KeyPrefix
 }
 
 func (a *AuthService) validSession(token string) bool {

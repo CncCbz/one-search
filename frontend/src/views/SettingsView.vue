@@ -69,6 +69,25 @@
       </el-card>
 
       <el-card class="soft-card settings-section settings-section-wide" shadow="never">
+        <template #header>管理员 API Key</template>
+        <div class="admin-key-card">
+          <div class="admin-key-info">
+            <span>用于外部系统调用管理接口，拥有完整管理员权限。</span>
+            <code v-if="adminAPIKey?.key_prefix">{{ adminAPIKey.key_prefix }}...</code>
+            <el-tag v-else type="info">未生成</el-tag>
+          </div>
+          <el-button type="primary" @click="generateAdminAPIKey">{{ adminAPIKey?.key_prefix ? '重新随机生成' : '随机生成' }}</el-button>
+        </div>
+        <el-alert v-if="rawAdminAPIKey" type="success" show-icon :closable="false" class="admin-key-alert">
+          <template #title>
+            <span>新管理员 API Key 只显示一次：</span>
+            <code>{{ rawAdminAPIKey }}</code>
+            <el-button link type="primary" @click="copyText(rawAdminAPIKey)">复制</el-button>
+          </template>
+        </el-alert>
+      </el-card>
+
+      <el-card class="soft-card settings-section settings-section-wide" shadow="never">
         <template #header>兼容接口</template>
         <div class="compat-grid">
           <div class="compat-item">
@@ -100,16 +119,38 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { api, RuntimeSettings } from '../api/client'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { api, AdminAPIKey, RuntimeSettings } from '../api/client'
 
 const settings = ref<RuntimeSettings>()
+const adminAPIKey = ref<AdminAPIKey>()
+const rawAdminAPIKey = ref('')
 
 async function load() {
-  settings.value = await api.settings()
+  const [runtimeSettings, currentAdminAPIKey] = await Promise.all([api.settings(), api.adminAPIKey()])
+  settings.value = runtimeSettings
+  adminAPIKey.value = currentAdminAPIKey
   if (!settings.value.provider_health_window_minutes) settings.value.provider_health_window_minutes = 15
   if (!settings.value.provider_routing_strategy) settings.value.provider_routing_strategy = 'fixed'
   if (!settings.value.log_retention_days) settings.value.log_retention_days = 3
+}
+
+async function copyText(text: string) {
+  if (!text) return
+  await navigator.clipboard.writeText(text)
+  ElMessage.success('已复制')
+}
+
+async function generateAdminAPIKey() {
+  try {
+    await ElMessageBox.confirm('生成新的管理员 API Key 后，旧 Key 将立即失效。是否继续？', '确认生成管理员 API Key', { type: 'warning' })
+  } catch {
+    return
+  }
+  const result = await api.rotateAdminAPIKey()
+  adminAPIKey.value = result
+  rawAdminAPIKey.value = result.key || ''
+  ElMessage.success('管理员 API Key 已生成')
 }
 
 async function save() {
@@ -129,6 +170,11 @@ onMounted(load)
 .settings-item > span { flex-shrink: 0; color: var(--text); font-weight: 700; }
 .settings-item :deep(.el-select), .settings-item :deep(.el-input-number) { width: 180px; }
 .compat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.admin-key-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--el-border-radius-base); background: rgba(255, 255, 255, .58); }
+.admin-key-info { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.admin-key-info span { color: var(--text); font-weight: 700; }
+.admin-key-info code, .admin-key-alert code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.admin-key-alert { margin-top: 12px; }
 .compat-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--el-border-radius-base); background: rgba(255, 255, 255, .58); }
 .compat-item strong { display: block; color: var(--text); }
 .compat-item span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
