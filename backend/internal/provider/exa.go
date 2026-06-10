@@ -47,7 +47,7 @@ func (p *ExaProvider) Search(ctx context.Context, req model.SearchRequest, key m
 		return model.ProviderResponse{}, err
 	}
 	results := normalizeExaResults(payload, req.IncludeRaw)
-	return model.ProviderResponse{Results: results, Raw: payload}, nil
+	return model.ProviderResponse{Results: results, Usage: usageMeasurements(model.ProviderExa, payload), Raw: payload}, nil
 }
 
 func normalizeExaResults(payload map[string]interface{}, includeRaw bool) []model.SearchResult {

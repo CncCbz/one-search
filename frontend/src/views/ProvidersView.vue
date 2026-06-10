@@ -185,6 +185,25 @@
                   <div class="advanced-field-label">换 key 重试</div>
                   <el-input-number v-model="providerKeyRetryCount" :min="0" :max="20" controls-position="right" />
                 </div>
+                <div class="advanced-field advanced-field-wide">
+                  <div class="advanced-field-label">Key 路由策略</div>
+                  <el-select v-model="providerKeyRoutingStrategy">
+                    <el-option value="" label="权重优先轮询" />
+                    <el-option value="least_used" label="最少使用优先" />
+                    <el-option value="random" label="随机" />
+                    <el-option value="weighted_random" label="按权重随机" />
+                  </el-select>
+                </div>
+                <div class="advanced-field advanced-field-wide">
+                  <div class="advanced-field-label">可重试错误</div>
+                  <el-select v-model="providerRetryErrorTypes" multiple collapse-tags collapse-tags-tooltip>
+                    <el-option label="鉴权失败" value="auth" />
+                    <el-option label="额度耗尽" value="quota_exhausted" />
+                    <el-option label="限流" value="rate_limited" />
+                    <el-option label="上游错误" value="upstream" />
+                    <el-option label="响应异常" value="invalid_response" />
+                  </el-select>
+                </div>
                 <div class="advanced-field">
                   <div class="advanced-field-label">启用缓存</div>
                   <el-switch v-model="providerForm.default_cache_enabled" />
@@ -263,6 +282,27 @@ const providerKeyRetryCount = computed({
   set(value: number) {
     if (!providerForm.value) return
     providerForm.value.settings = { ...(providerForm.value.settings || {}), key_retry_count: value }
+  }
+})
+const providerRetryErrorTypes = computed<string[]>({
+  get() {
+    const value = providerForm.value?.settings?.retry_error_types
+    if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string')
+    return ['auth', 'quota_exhausted', 'rate_limited']
+  },
+  set(value: string[]) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), retry_error_types: value }
+  }
+})
+const providerKeyRoutingStrategy = computed<string>({
+  get() {
+    const value = providerForm.value?.settings?.key_routing_strategy
+    return typeof value === 'string' ? value : ''
+  },
+  set(value: string) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), key_routing_strategy: value }
   }
 })
 
@@ -710,6 +750,15 @@ onMounted(load)
 .advanced-field :deep(.el-input-number) {
   width: 112px;
   flex-shrink: 0;
+}
+
+.advanced-field :deep(.el-select) {
+  flex: 1;
+  min-width: 180px;
+}
+
+.advanced-field-wide {
+  grid-column: span 2;
 }
 
 .advanced-field :deep(.el-switch) {

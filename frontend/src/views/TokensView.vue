@@ -38,6 +38,7 @@
         </el-table-column>
         <el-table-column prop="rate_limit_per_min" label="RPM" width="90" />
         <el-table-column prop="daily_quota" label="日额度" width="100" />
+        <el-table-column prop="monthly_quota" label="月额度" width="100" />
         <el-table-column prop="usage_count" label="使用次数" width="100" />
         <el-table-column label="操作" width="220">
           <template #default="scope">
@@ -59,6 +60,7 @@
         </el-form-item>
         <el-form-item label="每分钟限制（0 表示不限）"><el-input-number v-model="form.rate_limit_per_min" :min="0" /></el-form-item>
         <el-form-item label="日额度（0 表示不限）"><el-input-number v-model="form.daily_quota" :min="0" /></el-form-item>
+        <el-form-item label="月额度（0 表示不限）"><el-input-number v-model="form.monthly_quota" :min="0" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
@@ -82,7 +84,7 @@ const tokens = ref<ApiToken[]>([])
 const dialog = ref(false)
 const rawToken = ref('')
 const editingToken = ref<ApiToken | null>(null)
-const form = reactive({ name: '默认客户端', scopes: ['search'], allowed_providers: [] as string[], rate_limit_per_min: 0, daily_quota: 0 })
+const form = reactive({ name: '默认客户端', scopes: ['search'], allowed_providers: [] as string[], rate_limit_per_min: 0, daily_quota: 0, monthly_quota: 0 })
 
 async function load() {
   tokens.value = (await api.tokens()).tokens
@@ -102,6 +104,7 @@ function resetForm() {
   form.allowed_providers = []
   form.rate_limit_per_min = 0
   form.daily_quota = 0
+  form.monthly_quota = 0
 }
 
 function openCreate() {
@@ -117,6 +120,7 @@ function openEdit(token: ApiToken) {
   form.allowed_providers = [...(token.allowed_providers || [])]
   form.rate_limit_per_min = token.rate_limit_per_min
   form.daily_quota = token.daily_quota
+  form.monthly_quota = token.monthly_quota || 0
   dialog.value = true
 }
 

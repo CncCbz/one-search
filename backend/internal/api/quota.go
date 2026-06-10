@@ -32,5 +32,6 @@ func (h *Handler) keyQuota(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "provider_key.quota", "provider_key", strconv.FormatInt(id, 10), map[string]interface{}{"provider": response.Provider, "status": response.Status, "unit": response.Unit})
 	writeJSON(w, http.StatusOK, response)
 }

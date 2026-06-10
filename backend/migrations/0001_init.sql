@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     status TEXT NOT NULL DEFAULT 'enabled' CHECK (status IN ('enabled', 'disabled')),
     rate_limit_per_min INTEGER NOT NULL DEFAULT 0,
     daily_quota INTEGER NOT NULL DEFAULT 0,
+    monthly_quota INTEGER NOT NULL DEFAULT 0,
     last_used_at TIMESTAMPTZ,
     usage_count BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -110,6 +111,33 @@ CREATE TABLE IF NOT EXISTS search_cache (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    request_id TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT 'admin',
+    action TEXT NOT NULL,
+    resource_type TEXT NOT NULL DEFAULT '',
+    resource_id TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS provider_call_usage (
+    id BIGSERIAL PRIMARY KEY,
+    provider_call_id BIGINT REFERENCES provider_calls(id) ON DELETE CASCADE,
+    search_request_id BIGINT REFERENCES search_requests(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    api_token_id BIGINT REFERENCES api_tokens(id) ON DELETE SET NULL,
+    provider_key_id BIGINT REFERENCES provider_keys(id) ON DELETE SET NULL,
+    provider_name TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    quantity NUMERIC NOT NULL DEFAULT 0,
+    cost_usd NUMERIC,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS usage_daily (
     id BIGSERIAL PRIMARY KEY,
     usage_date DATE NOT NULL,
@@ -129,7 +157,23 @@ CREATE INDEX IF NOT EXISTS idx_provider_keys_provider_status ON provider_keys(pr
 CREATE INDEX IF NOT EXISTS idx_search_requests_created_at ON search_requests(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_calls_request_id ON provider_calls(request_id);
 CREATE INDEX IF NOT EXISTS idx_search_cache_expires_at ON search_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provider_call_usage_request_id ON provider_call_usage(request_id);
 CREATE INDEX IF NOT EXISTS idx_usage_daily_date ON usage_daily(usage_date DESC);
+
+CREATE TABLE IF NOT EXISTS usage_meter_daily (
+    id BIGSERIAL PRIMARY KEY,
+    usage_date DATE NOT NULL,
+    api_token_id BIGINT REFERENCES api_tokens(id) ON DELETE SET NULL,
+    provider_key_id BIGINT REFERENCES provider_keys(id) ON DELETE SET NULL,
+    provider_name TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL,
+    quantity_total NUMERIC NOT NULL DEFAULT 0,
+    cost_usd_total NUMERIC NOT NULL DEFAULT 0,
+    UNIQUE NULLS NOT DISTINCT (usage_date, api_token_id, provider_key_id, provider_name, unit)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_meter_daily_date ON usage_meter_daily(usage_date DESC);
 
 INSERT INTO providers (name, display_name, base_url, priority, weight, timeout_ms, default_cache_enabled, cache_ttl_seconds, settings)
 VALUES
@@ -140,5 +184,5 @@ ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO settings (key, value)
 VALUES
-    ('runtime', '{"default_mode":"parallel","default_providers":["exa","you","jina"],"default_limit":10,"default_dedupe":true,"request_timeout_ms":20000,"cache_enabled":false,"cache_ttl_seconds":3600,"cache_max_results":20,"compat_tavily_enabled":true,"compat_serper_enabled":true,"compat_openai_enabled":true,"api_auth_required":true}'::jsonb)
+    ('runtime', '{"default_mode":"parallel","default_providers":["exa","you","jina"],"default_limit":10,"default_dedupe":true,"request_timeout_ms":20000,"cache_enabled":false,"cache_ttl_seconds":3600,"cache_max_results":20,"compat_tavily_enabled":true,"compat_serper_enabled":true,"compat_openai_enabled":true,"api_auth_required":true,"provider_health_window_minutes":15,"provider_routing_strategy":"fixed","log_retention_days":3}'::jsonb)
 ON CONFLICT (key) DO NOTHING;

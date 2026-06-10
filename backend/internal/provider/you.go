@@ -42,7 +42,7 @@ func (p *YouProvider) Search(ctx context.Context, req model.SearchRequest, key m
 		return model.ProviderResponse{}, err
 	}
 	results := normalizeYouResults(payload, req.IncludeRaw)
-	return model.ProviderResponse{Results: results, Raw: payload}, nil
+	return model.ProviderResponse{Results: results, Usage: usageMeasurements(model.ProviderYou, payload), Raw: payload}, nil
 }
 
 func normalizeYouResults(payload map[string]interface{}, includeRaw bool) []model.SearchResult {

@@ -68,6 +68,8 @@ func main() {
 		return pool.Ping(pingCtx) == nil
 	})
 	server.Mount(handler.Mount)
+	stopCleaner := startLogRetentionCleaner(store, log)
+	defer stopCleaner()
 
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -92,4 +94,42 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Error("server_shutdown_failed", map[string]interface{}{"error": err.Error()})
 	}
+}
+
+func startLogRetentionCleaner(store *db.Store, log *logging.Logger) func() {
+	stop := make(chan struct{})
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		settings, err := store.RuntimeSettings(ctx)
+		if err != nil {
+			log.Error("log_retention_settings_failed", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		searchDeleted, auditDeleted, err := store.DeleteOldLogs(ctx, settings.LogRetentionDays)
+		if err != nil {
+			log.Error("log_retention_cleanup_failed", map[string]interface{}{"error": err.Error(), "retention_days": settings.LogRetentionDays})
+			return
+		}
+		if err := store.DeleteExpiredCache(ctx); err != nil {
+			log.Error("cache_cleanup_failed", map[string]interface{}{"error": err.Error()})
+		}
+		if searchDeleted > 0 || auditDeleted > 0 {
+			log.Info("log_retention_cleanup", map[string]interface{}{"retention_days": settings.LogRetentionDays, "search_deleted": searchDeleted, "audit_deleted": auditDeleted})
+		}
+	}
+	go func() {
+		run()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				run()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() { close(stop) }
 }

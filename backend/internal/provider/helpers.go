@@ -184,6 +184,71 @@ func jsonNumber(value float64) string {
 	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(value, 'f', -1, 64), "0"), ".")
 }
 
+func usageMeasurements(providerName string, payload map[string]interface{}) []model.UsageMeasurement {
+	if payload == nil {
+		return nil
+	}
+	metadata := map[string]interface{}{"provider": providerName}
+	measurements := []model.UsageMeasurement{}
+	if tokens := usageNumber(payload, "total_tokens", "tokens", "token_count", "usage.total_tokens", "usage.tokens"); tokens > 0 {
+		measurements = append(measurements, model.UsageMeasurement{Unit: "tokens", Quantity: tokens, Metadata: metadata})
+	}
+	cost := usageNumber(payload, "cost_usd", "total_cost_usd", "usage.cost_usd", "usage.total_cost_usd")
+	if cost == 0 {
+		cost = usageNumber(payload, "cost", "total_cost", "usage.cost", "usage.total_cost")
+	}
+	if cost > 0 {
+		measurements = append(measurements, model.UsageMeasurement{Unit: "usd", Quantity: cost, CostUSD: float64Pointer(cost), Metadata: metadata})
+	}
+	return measurements
+}
+
+func usageNumber(payload map[string]interface{}, keys ...string) float64 {
+	for _, key := range keys {
+		value, ok := nestedValue(payload, key)
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			return typed
+		case int:
+			return float64(typed)
+		case int64:
+			return float64(typed)
+		case json.Number:
+			if parsed, err := typed.Float64(); err == nil {
+				return parsed
+			}
+		case string:
+			if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func nestedValue(payload map[string]interface{}, dotted string) (interface{}, bool) {
+	parts := strings.Split(dotted, ".")
+	var current interface{} = payload
+	for _, part := range parts {
+		item, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		current, ok = item[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
+}
+
 func truncate(value string, max int) string {
 	if max <= 0 || len(value) <= max {
 		return value

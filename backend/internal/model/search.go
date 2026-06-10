@@ -34,18 +34,19 @@ const (
 )
 
 type SearchRequest struct {
-	Query         string                 `json:"query"`
-	Providers     []string               `json:"providers,omitempty"`
-	Mode          SearchMode             `json:"mode,omitempty"`
-	Limit         int                    `json:"limit,omitempty"`
-	LimitExplicit bool                   `json:"-"`
-	Freshness     string                 `json:"freshness,omitempty"`
-	Dedupe        *bool                  `json:"dedupe,omitempty"`
-	Rerank        bool                   `json:"rerank,omitempty"`
-	Cache         CachePolicy            `json:"cache,omitempty"`
-	IncludeRaw    bool                   `json:"include_raw,omitempty"`
-	CompatFormat  CompatFormat           `json:"-"`
-	Options       map[string]interface{} `json:"options,omitempty"`
+	Query             string                 `json:"query"`
+	Providers         []string               `json:"providers,omitempty"`
+	ProvidersExplicit bool                   `json:"-"`
+	Mode              SearchMode             `json:"mode,omitempty"`
+	Limit             int                    `json:"limit,omitempty"`
+	LimitExplicit     bool                   `json:"-"`
+	Freshness         string                 `json:"freshness,omitempty"`
+	Dedupe            *bool                  `json:"dedupe,omitempty"`
+	Rerank            bool                   `json:"rerank,omitempty"`
+	Cache             CachePolicy            `json:"cache,omitempty"`
+	IncludeRaw        bool                   `json:"include_raw,omitempty"`
+	CompatFormat      CompatFormat           `json:"-"`
+	Options           map[string]interface{} `json:"options,omitempty"`
 }
 
 type SearchResponse struct {
@@ -91,6 +92,7 @@ type SearchMeta struct {
 
 type ProviderResponse struct {
 	Results []SearchResult         `json:"results"`
+	Usage   []UsageMeasurement     `json:"usage,omitempty"`
 	Raw     map[string]interface{} `json:"raw,omitempty"`
 }
 
@@ -125,22 +127,28 @@ type APIKey struct {
 	DailyQuota        int       `json:"daily_quota"`
 	MonthlyQuota      int       `json:"monthly_quota"`
 	MaxConcurrency    int       `json:"max_concurrency"`
+	TotalSuccesses    int64     `json:"total_successes"`
+	TotalFailures     int64     `json:"total_failures"`
+	LastUsedAt        time.Time `json:"last_used_at,omitempty"`
 	CooldownUntil     time.Time `json:"cooldown_until,omitempty"`
 }
 
 type RuntimeSettings struct {
-	DefaultMode         SearchMode `json:"default_mode"`
-	DefaultProviders    []string   `json:"default_providers"`
-	DefaultLimit        int        `json:"default_limit"`
-	DefaultDedupe       bool       `json:"default_dedupe"`
-	RequestTimeoutMS    int        `json:"request_timeout_ms"`
-	CacheEnabled        bool       `json:"cache_enabled"`
-	CacheTTLSeconds     int        `json:"cache_ttl_seconds"`
-	CacheMaxResults     int        `json:"cache_max_results"`
-	CompatTavilyEnabled bool       `json:"compat_tavily_enabled"`
-	CompatSerperEnabled bool       `json:"compat_serper_enabled"`
-	CompatOpenAIEnabled bool       `json:"compat_openai_enabled"`
-	APIAuthRequired     bool       `json:"api_auth_required"`
+	DefaultMode                 SearchMode `json:"default_mode"`
+	DefaultProviders            []string   `json:"default_providers"`
+	DefaultLimit                int        `json:"default_limit"`
+	DefaultDedupe               bool       `json:"default_dedupe"`
+	RequestTimeoutMS            int        `json:"request_timeout_ms"`
+	CacheEnabled                bool       `json:"cache_enabled"`
+	CacheTTLSeconds             int        `json:"cache_ttl_seconds"`
+	CacheMaxResults             int        `json:"cache_max_results"`
+	CompatTavilyEnabled         bool       `json:"compat_tavily_enabled"`
+	CompatSerperEnabled         bool       `json:"compat_serper_enabled"`
+	CompatOpenAIEnabled         bool       `json:"compat_openai_enabled"`
+	APIAuthRequired             bool       `json:"api_auth_required"`
+	ProviderHealthWindowMinutes int        `json:"provider_health_window_minutes"`
+	ProviderRoutingStrategy     string     `json:"provider_routing_strategy"`
+	LogRetentionDays            int        `json:"log_retention_days"`
 }
 
 type UsageSummary struct {

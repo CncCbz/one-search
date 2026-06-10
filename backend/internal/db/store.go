@@ -43,18 +43,21 @@ func (s *Store) GetAdminByUsername(ctx context.Context, username string) (model.
 
 func (s *Store) RuntimeSettings(ctx context.Context) (model.RuntimeSettings, error) {
 	settings := model.RuntimeSettings{
-		DefaultMode:         model.SearchModeParallel,
-		DefaultProviders:    []string{model.ProviderExa, model.ProviderYou, model.ProviderJina},
-		DefaultLimit:        10,
-		DefaultDedupe:       true,
-		RequestTimeoutMS:    20000,
-		CacheEnabled:        false,
-		CacheTTLSeconds:     3600,
-		CacheMaxResults:     20,
-		CompatTavilyEnabled: true,
-		CompatSerperEnabled: true,
-		CompatOpenAIEnabled: true,
-		APIAuthRequired:     true,
+		DefaultMode:                 model.SearchModeParallel,
+		DefaultProviders:            []string{model.ProviderExa, model.ProviderYou, model.ProviderJina},
+		DefaultLimit:                10,
+		DefaultDedupe:               true,
+		RequestTimeoutMS:            20000,
+		CacheEnabled:                false,
+		CacheTTLSeconds:             3600,
+		CacheMaxResults:             20,
+		CompatTavilyEnabled:         true,
+		CompatSerperEnabled:         true,
+		CompatOpenAIEnabled:         true,
+		APIAuthRequired:             true,
+		ProviderHealthWindowMinutes: 15,
+		ProviderRoutingStrategy:     "fixed",
+		LogRetentionDays:            3,
 	}
 	var payload []byte
 	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key='runtime'`).Scan(&payload)
@@ -71,6 +74,15 @@ func (s *Store) RuntimeSettings(ctx context.Context) (model.RuntimeSettings, err
 }
 
 func (s *Store) UpdateRuntimeSettings(ctx context.Context, settings model.RuntimeSettings) error {
+	if settings.ProviderHealthWindowMinutes <= 0 {
+		settings.ProviderHealthWindowMinutes = 15
+	}
+	if settings.ProviderRoutingStrategy == "" {
+		settings.ProviderRoutingStrategy = "fixed"
+	}
+	if settings.LogRetentionDays <= 0 {
+		settings.LogRetentionDays = 3
+	}
 	payload, err := json.Marshal(settings)
 	if err != nil {
 		return err
@@ -123,11 +135,21 @@ func (s *Store) UpdateProvider(ctx context.Context, provider model.ProviderConfi
 	return err
 }
 
+func (s *Store) ProviderKeyRoutingStrategy(ctx context.Context, providerName string) (string, error) {
+	var strategy string
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(settings->>'key_routing_strategy', '') FROM providers WHERE name=$1`, providerName).Scan(&strategy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return strategy, err
+}
+
 func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName string) ([]model.APIKey, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint,
 		       COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_ciphertext, ''), COALESCE(k.exa_service_key_hint, ''),
-		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency,
+		       k.total_successes, k.total_failures, COALESCE(k.last_used_at, '0001-01-01'::timestamptz), COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
 		WHERE p.name=$1 AND p.enabled=TRUE
@@ -144,7 +166,7 @@ func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName stri
 	for rows.Next() {
 		var item model.APIKey
 		var ciphertext, exaServiceKeyCiphertext string
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CooldownUntil); err != nil {
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.TotalSuccesses, &item.TotalFailures, &item.LastUsedAt, &item.CooldownUntil); err != nil {
 			return nil, err
 		}
 		plain, err := s.crypto.Decrypt(ciphertext)
@@ -168,14 +190,15 @@ func (s *Store) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, erro
 	row := s.pool.QueryRow(ctx, `
 		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint,
 		       COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_ciphertext, ''), COALESCE(k.exa_service_key_hint, ''),
-		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency,
+		       k.total_successes, k.total_failures, COALESCE(k.last_used_at, '0001-01-01'::timestamptz), COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
 		WHERE k.id=$1
 	`, id)
 	var item model.APIKey
 	var ciphertext, exaServiceKeyCiphertext string
-	if err := row.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CooldownUntil); err != nil {
+	if err := row.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.TotalSuccesses, &item.TotalFailures, &item.LastUsedAt, &item.CooldownUntil); err != nil {
 		return model.APIKey{}, err
 	}
 	plain, err := s.crypto.Decrypt(ciphertext)
@@ -424,13 +447,14 @@ func (s *Store) RecordKeyResult(ctx context.Context, key model.APIKey, success b
 func (s *Store) FindAPIToken(ctx context.Context, token string) (model.APIToken, error) {
 	hash := security.HashToken(token)
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, name, token_hash, token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
+		SELECT id, name, token_hash, token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
 		FROM api_tokens
 		WHERE token_hash=$1 AND status='enabled'
 		  AND (daily_quota=0 OR COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.api_token_id=api_tokens.id AND u.provider_id IS NULL AND u.provider_key_id IS NULL AND u.usage_date=CURRENT_DATE),0) < daily_quota)
+		  AND (monthly_quota=0 OR COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.api_token_id=api_tokens.id AND u.provider_id IS NULL AND u.provider_key_id IS NULL AND u.usage_date >= date_trunc('month', CURRENT_DATE)::date),0) < monthly_quota)
 	`, hash)
 	var item model.APIToken
-	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.APIToken{}, err
 	}
 	_, _ = s.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at=now(), usage_count=usage_count+1 WHERE id=$1`, item.ID)
@@ -439,7 +463,7 @@ func (s *Store) FindAPIToken(ctx context.Context, token string) (model.APIToken,
 
 func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
+		SELECT id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
 		FROM api_tokens ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -449,7 +473,7 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	items := []model.APIToken{}
 	for rows.Next() {
 		var item model.APIToken
-		if err := rows.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if item.TokenCiphertext != "" {
@@ -464,7 +488,7 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	return items, rows.Err()
 }
 
-func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string, allowedProviders []string, rateLimit, dailyQuota int) (model.APIToken, string, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string, allowedProviders []string, rateLimit, dailyQuota, monthlyQuota int) (model.APIToken, string, error) {
 	rawToken, err := security.RandomToken("osr_")
 	if err != nil {
 		return model.APIToken{}, "", err
@@ -479,12 +503,12 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string
 	hash := security.HashToken(rawToken)
 	prefix := security.TokenPrefix(rawToken)
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO api_tokens (name, token_hash, token_ciphertext, token_prefix, scopes, allowed_providers, rate_limit_per_min, daily_quota)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, last_used_at, usage_count, created_at, updated_at
-	`, name, hash, tokenCiphertext, prefix, scopes, allowedProviders, rateLimit, dailyQuota)
+		INSERT INTO api_tokens (name, token_hash, token_ciphertext, token_prefix, scopes, allowed_providers, rate_limit_per_min, daily_quota, monthly_quota)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
+	`, name, hash, tokenCiphertext, prefix, scopes, allowedProviders, rateLimit, dailyQuota, monthlyQuota)
 	var item model.APIToken
-	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.APIToken{}, "", err
 	}
 	item.Token = rawToken
@@ -496,12 +520,12 @@ func (s *Store) UpdateAPITokenStatus(ctx context.Context, id int64, status strin
 	return err
 }
 
-func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota int) error {
+func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota, monthlyQuota int) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE api_tokens
-		SET name=$2, allowed_providers=$3, rate_limit_per_min=$4, daily_quota=$5, updated_at=now()
+		SET name=$2, allowed_providers=$3, rate_limit_per_min=$4, daily_quota=$5, monthly_quota=$6, updated_at=now()
 		WHERE id=$1
-	`, id, name, allowedProviders, rateLimit, dailyQuota)
+	`, id, name, allowedProviders, rateLimit, dailyQuota, monthlyQuota)
 	return err
 }
 
@@ -545,11 +569,16 @@ func (s *Store) RecordSearchLog(ctx context.Context, input model.SearchLogInput)
 		if attemptIndex <= 0 {
 			attemptIndex = 1
 		}
-		_, err := tx.Exec(ctx, `
+		var providerCallID int64
+		err := tx.QueryRow(ctx, `
 			INSERT INTO provider_calls (search_request_id, request_id, provider_key_id, provider_name, key_alias, attempt_index, will_retry, status, error_type, error_message, latency_ms, result_count, cached)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		`, searchRequestID, input.RequestID, providerKey, call.ProviderName, call.KeyAlias, attemptIndex, call.WillRetry, call.Status, call.ErrorType, call.ErrorMessage, int(call.LatencyMS), call.ResultCount, call.Cached)
+			RETURNING id
+		`, searchRequestID, input.RequestID, providerKey, call.ProviderName, call.KeyAlias, attemptIndex, call.WillRetry, call.Status, call.ErrorType, call.ErrorMessage, int(call.LatencyMS), call.ResultCount, call.Cached).Scan(&providerCallID)
 		if err != nil {
+			return err
+		}
+		if err := insertCallUsage(ctx, tx, searchRequestID, input, providerCallID, call); err != nil {
 			return err
 		}
 	}
@@ -557,6 +586,60 @@ func (s *Store) RecordSearchLog(ctx context.Context, input model.SearchLogInput)
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func insertCallUsage(ctx context.Context, tx pgx.Tx, searchRequestID int64, input model.SearchLogInput, providerCallID int64, call model.ProviderCallLog) error {
+	measurements := append([]model.UsageMeasurement{{Unit: "requests", Quantity: 1}}, call.Usage...)
+	var apiToken interface{}
+	if input.APITokenID > 0 {
+		apiToken = input.APITokenID
+	}
+	var providerKey interface{}
+	if call.ProviderKeyID > 0 {
+		providerKey = call.ProviderKeyID
+	}
+	for _, measurement := range measurements {
+		unit := strings.TrimSpace(strings.ToLower(measurement.Unit))
+		if unit == "" || measurement.Quantity == 0 {
+			continue
+		}
+		metadata := measurement.Metadata
+		if metadata == nil {
+			metadata = map[string]interface{}{}
+		}
+		metadataJSON, err := json.Marshal(metadata)
+		if err != nil {
+			return err
+		}
+		var costUSD interface{}
+		costTotal := 0.0
+		if measurement.CostUSD != nil {
+			costUSD = *measurement.CostUSD
+			costTotal = *measurement.CostUSD
+		}
+		if unit == "usd" && costTotal == 0 {
+			costTotal = measurement.Quantity
+			costUSD = measurement.Quantity
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO provider_call_usage (provider_call_id, search_request_id, request_id, api_token_id, provider_key_id, provider_name, unit, quantity, cost_usd, metadata)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+		`, providerCallID, searchRequestID, input.RequestID, apiToken, providerKey, call.ProviderName, unit, measurement.Quantity, costUSD, string(metadataJSON))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO usage_meter_daily (usage_date, api_token_id, provider_key_id, provider_name, unit, quantity_total, cost_usd_total)
+			VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, $6)
+			ON CONFLICT (usage_date, api_token_id, provider_key_id, provider_name, unit) DO UPDATE SET
+			quantity_total=usage_meter_daily.quantity_total+$5,
+			cost_usd_total=usage_meter_daily.cost_usd_total+$6
+		`, apiToken, providerKey, call.ProviderName, unit, measurement.Quantity, costTotal)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func upsertUsage(ctx context.Context, tx pgx.Tx, input model.SearchLogInput) error {
@@ -663,7 +746,7 @@ func (s *Store) getSearchLog(ctx context.Context, field string, value interface{
 		return model.SearchLog{}, nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT COALESCE(provider_key_id, 0), provider_name, key_alias, attempt_index, will_retry, status, error_type, error_message, latency_ms, result_count, cached
+		SELECT id, COALESCE(provider_key_id, 0), provider_name, key_alias, attempt_index, will_retry, status, error_type, error_message, latency_ms, result_count, cached
 		FROM provider_calls WHERE search_request_id=$1 ORDER BY id ASC
 	`, item.ID)
 	if err != nil {
@@ -671,14 +754,44 @@ func (s *Store) getSearchLog(ctx context.Context, field string, value interface{
 	}
 	defer rows.Close()
 	calls := []model.ProviderCallLog{}
+	callIndexes := map[int64]int{}
 	for rows.Next() {
 		var call model.ProviderCallLog
-		if err := rows.Scan(&call.ProviderKeyID, &call.ProviderName, &call.KeyAlias, &call.AttemptIndex, &call.WillRetry, &call.Status, &call.ErrorType, &call.ErrorMessage, &call.LatencyMS, &call.ResultCount, &call.Cached); err != nil {
+		if err := rows.Scan(&call.ID, &call.ProviderKeyID, &call.ProviderName, &call.KeyAlias, &call.AttemptIndex, &call.WillRetry, &call.Status, &call.ErrorType, &call.ErrorMessage, &call.LatencyMS, &call.ResultCount, &call.Cached); err != nil {
 			return model.SearchLog{}, nil, err
 		}
+		callIndexes[call.ID] = len(calls)
 		calls = append(calls, call)
 	}
-	return item, calls, rows.Err()
+	if err := rows.Err(); err != nil {
+		return model.SearchLog{}, nil, err
+	}
+	usageRows, err := s.pool.Query(ctx, `
+		SELECT provider_call_id, unit, quantity::float8, COALESCE(cost_usd, 0)::float8, cost_usd IS NOT NULL, metadata
+		FROM provider_call_usage WHERE search_request_id=$1 ORDER BY id ASC
+	`, item.ID)
+	if err != nil {
+		return model.SearchLog{}, nil, err
+	}
+	defer usageRows.Close()
+	for usageRows.Next() {
+		var callID int64
+		var usage model.UsageMeasurement
+		var costUSD float64
+		var hasCost bool
+		var metadataBytes []byte
+		if err := usageRows.Scan(&callID, &usage.Unit, &usage.Quantity, &costUSD, &hasCost, &metadataBytes); err != nil {
+			return model.SearchLog{}, nil, err
+		}
+		if hasCost {
+			usage.CostUSD = float64Ptr(costUSD)
+		}
+		_ = json.Unmarshal(metadataBytes, &usage.Metadata)
+		if index, ok := callIndexes[callID]; ok {
+			calls[index].Usage = append(calls[index].Usage, usage)
+		}
+	}
+	return item, calls, usageRows.Err()
 }
 
 func (s *Store) UsageSummary(ctx context.Context) (model.UsageSummary, error) {
@@ -696,6 +809,166 @@ func (s *Store) UsageSummary(ctx context.Context) (model.UsageSummary, error) {
 		summary.AverageLatency = float64(latencyTotal) / float64(summary.RequestsTotal)
 	}
 	return summary, nil
+}
+
+func (s *Store) BillingSummary(ctx context.Context, days int) (model.BillingSummary, error) {
+	if days <= 0 || days > 366 {
+		days = 30
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT provider_name, unit, COALESCE(SUM(quantity_total),0)::float8, COALESCE(SUM(cost_usd_total),0)::float8
+		FROM usage_meter_daily
+		WHERE usage_date >= CURRENT_DATE - ($1::int - 1)
+		GROUP BY provider_name, unit
+		ORDER BY provider_name ASC, unit ASC
+	`, days)
+	if err != nil {
+		return model.BillingSummary{}, err
+	}
+	defer rows.Close()
+	summary := model.BillingSummary{Days: days, Units: []model.UsageUnitSummary{}}
+	for rows.Next() {
+		var item model.UsageUnitSummary
+		if err := rows.Scan(&item.ProviderName, &item.Unit, &item.QuantityTotal, &item.CostUSDTotal); err != nil {
+			return summary, err
+		}
+		summary.Units = append(summary.Units, item)
+	}
+	return summary, rows.Err()
+}
+
+func (s *Store) ProviderHealth(ctx context.Context, windowMinutes int) ([]model.ProviderHealth, error) {
+	if windowMinutes <= 0 || windowMinutes > 24*60 {
+		windowMinutes = 15
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.name, p.display_name, p.enabled,
+		       COUNT(k.id)::int,
+		       COUNT(k.id) FILTER (WHERE k.status='enabled' OR (k.status='cooling' AND (k.cooldown_until IS NULL OR k.cooldown_until < now())))::int,
+		       COUNT(k.id) FILTER (WHERE k.status='exhausted')::int,
+		       COUNT(k.id) FILTER (WHERE k.status='disabled')::int,
+		       COUNT(k.id) FILTER (WHERE k.status='cooling')::int
+		FROM providers p
+		LEFT JOIN provider_keys k ON k.provider_id=p.id
+		GROUP BY p.id
+		ORDER BY p.priority ASC, p.name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []model.ProviderHealth{}
+	for rows.Next() {
+		var item model.ProviderHealth
+		if err := rows.Scan(&item.ProviderName, &item.DisplayName, &item.Enabled, &item.TotalKeys, &item.AvailableKeys, &item.ExhaustedKeys, &item.DisabledKeys, &item.CoolingKeys); err != nil {
+			return nil, err
+		}
+		item.WindowMinutes = windowMinutes
+		item.LastCheckedAt = time.Now()
+		item.Status = providerHealthStatus(item)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range items {
+		stats, err := s.providerRecentStats(ctx, items[index].ProviderName, windowMinutes)
+		if err != nil {
+			return nil, err
+		}
+		items[index].RequestsTotal = stats.requestsTotal
+		items[index].RequestsFailed = stats.requestsFailed
+		items[index].LastError = stats.lastError
+		if stats.requestsTotal > 0 {
+			items[index].SuccessRate = float64(stats.requestsTotal-stats.requestsFailed) / float64(stats.requestsTotal)
+		}
+		if items[index].Status == "healthy" && stats.requestsTotal >= 5 && items[index].SuccessRate < 0.8 {
+			items[index].Status = "degraded"
+		}
+	}
+	return items, nil
+}
+
+type providerRecentStats struct {
+	requestsTotal  int64
+	requestsFailed int64
+	lastError      string
+}
+
+func (s *Store) providerRecentStats(ctx context.Context, providerName string, windowMinutes int) (providerRecentStats, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::bigint,
+		       COUNT(*) FILTER (WHERE status='error')::bigint,
+		       COALESCE((ARRAY_AGG(error_message ORDER BY created_at DESC) FILTER (WHERE error_message <> ''))[1], '')
+		FROM provider_calls
+		WHERE provider_name=$1 AND created_at >= now() - make_interval(mins => $2)
+	`, providerName, windowMinutes)
+	var stats providerRecentStats
+	if err := row.Scan(&stats.requestsTotal, &stats.requestsFailed, &stats.lastError); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
+func providerHealthStatus(item model.ProviderHealth) string {
+	if !item.Enabled {
+		return "disabled"
+	}
+	if item.TotalKeys == 0 {
+		return "no_keys"
+	}
+	if item.AvailableKeys == 0 {
+		return "down"
+	}
+	if item.ExhaustedKeys > 0 || item.CoolingKeys > 0 {
+		return "degraded"
+	}
+	return "healthy"
+}
+
+func (s *Store) RecordAuditLog(ctx context.Context, input model.AuditLogInput) error {
+	actor := strings.TrimSpace(input.Actor)
+	if actor == "" {
+		actor = "admin"
+	}
+	metadata := input.Metadata
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO audit_logs (request_id, actor, action, resource_type, resource_id, ip_address, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
+	`, input.RequestID, actor, input.Action, input.ResourceType, input.ResourceID, input.IPAddress, string(payload))
+	return err
+}
+
+func (s *Store) ListAuditLogs(ctx context.Context, limit int) ([]model.AuditLog, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, request_id, actor, action, resource_type, resource_id, ip_address, metadata, created_at
+		FROM audit_logs ORDER BY created_at DESC LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []model.AuditLog{}
+	for rows.Next() {
+		var item model.AuditLog
+		var metadata []byte
+		if err := rows.Scan(&item.ID, &item.RequestID, &item.Actor, &item.Action, &item.ResourceType, &item.ResourceID, &item.IPAddress, &metadata, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(metadata, &item.Metadata)
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) GetCache(ctx context.Context, cacheKey string) ([]byte, bool, error) {
@@ -730,6 +1003,21 @@ func (s *Store) SetCache(ctx context.Context, cacheKey string, payload []byte, t
 func (s *Store) DeleteExpiredCache(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM search_cache WHERE expires_at <= now()`)
 	return err
+}
+
+func (s *Store) DeleteOldLogs(ctx context.Context, retentionDays int) (int64, int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 3
+	}
+	searchResult, err := s.pool.Exec(ctx, `DELETE FROM search_requests WHERE created_at < now() - make_interval(days => $1)`, retentionDays)
+	if err != nil {
+		return 0, 0, err
+	}
+	auditResult, err := s.pool.Exec(ctx, `DELETE FROM audit_logs WHERE created_at < now() - make_interval(days => $1)`, retentionDays)
+	if err != nil {
+		return searchResult.RowsAffected(), 0, err
+	}
+	return searchResult.RowsAffected(), auditResult.RowsAffected(), nil
 }
 
 func weightOrDefault(value int) int {

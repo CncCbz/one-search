@@ -32,6 +32,17 @@
             <span>结果去重</span>
             <el-switch v-model="settings.default_dedupe" />
           </div>
+          <div class="settings-item">
+            <span>平台路由策略</span>
+            <el-select v-model="settings.provider_routing_strategy">
+              <el-option value="fixed" label="固定顺序" />
+              <el-option value="priority" label="优先级优先" />
+              <el-option value="weighted" label="权重优先" />
+              <el-option value="weighted_random" label="按权重随机" />
+              <el-option value="available_keys" label="可用 Key 优先" />
+              <el-option value="random" label="随机" />
+            </el-select>
+          </div>
         </div>
       </el-card>
 
@@ -45,6 +56,14 @@
           <div class="settings-item">
             <span>接口令牌鉴权</span>
             <el-switch v-model="settings.api_auth_required" />
+          </div>
+          <div class="settings-item">
+            <span>健康统计窗口(分钟)</span>
+            <el-input-number v-model="settings.provider_health_window_minutes" :min="1" :max="1440" controls-position="right" />
+          </div>
+          <div class="settings-item">
+            <span>日志保留天数</span>
+            <el-input-number v-model="settings.log_retention_days" :min="1" :max="365" controls-position="right" />
           </div>
         </div>
       </el-card>
@@ -88,6 +107,9 @@ const settings = ref<RuntimeSettings>()
 
 async function load() {
   settings.value = await api.settings()
+  if (!settings.value.provider_health_window_minutes) settings.value.provider_health_window_minutes = 15
+  if (!settings.value.provider_routing_strategy) settings.value.provider_routing_strategy = 'fixed'
+  if (!settings.value.log_retention_days) settings.value.log_retention_days = 3
 }
 
 async function save() {

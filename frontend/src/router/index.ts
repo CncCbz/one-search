@@ -6,6 +6,7 @@ import ProvidersView from '../views/ProvidersView.vue'
 import TokensView from '../views/TokensView.vue'
 import PlaygroundView from '../views/PlaygroundView.vue'
 import LogsView from '../views/LogsView.vue'
+import AuditLogsView from '../views/AuditLogsView.vue'
 import SettingsView from '../views/SettingsView.vue'
 
 const router = createRouter({
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/tokens', component: TokensView },
     { path: '/playground', component: PlaygroundView },
     { path: '/logs', component: LogsView },
+    { path: '/audit', component: AuditLogsView },
     { path: '/usage', redirect: '/' },
     { path: '/settings', component: SettingsView }
   ]

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"sort"
 	"strings"
@@ -55,10 +56,19 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	if err != nil {
 		return model.SearchResponse{}, err
 	}
+	providerConfigs, err := o.store.ListProviders(ctx)
+	if err != nil {
+		return model.SearchResponse{}, err
+	}
 	req = applyDefaults(req, settings)
-	providerSettings := o.providerSettings(ctx)
+	if !req.ProvidersExplicit {
+		req.Providers = routeProviders(req.Providers, providerConfigs, settings.ProviderRoutingStrategy)
+	}
+	providerSettings := providerSettingsFromProviders(providerConfigs)
 	providerLimits := providerResultLimits(providerSettings)
 	keyRetryCounts := providerKeyRetryCounts(providerSettings)
+	providerTimeouts := providerTimeouts(providerSettings)
+	providerRetryableErrors := providerRetryableErrors(providerSettings)
 	if !req.LimitExplicit && len(req.Providers) == 1 {
 		if limit := providerLimits[req.Providers[0]]; limit > 0 {
 			req.Limit = limit
@@ -104,11 +114,11 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	var providerResults []providerExecution
 	switch req.Mode {
 	case model.SearchModeFallback:
-		providerResults = o.searchFallback(ctx, req, providerLimits, keyRetryCounts)
+		providerResults = o.searchFallback(ctx, req, providerLimits, keyRetryCounts, providerTimeouts, providerRetryableErrors)
 	case model.SearchModeSingle:
-		providerResults = o.searchSingle(ctx, req, providerLimits, keyRetryCounts)
+		providerResults = o.searchSingle(ctx, req, providerLimits, keyRetryCounts, providerTimeouts, providerRetryableErrors)
 	default:
-		providerResults = o.searchParallel(ctx, req, providerLimits, keyRetryCounts)
+		providerResults = o.searchParallel(ctx, req, providerLimits, keyRetryCounts, providerTimeouts, providerRetryableErrors)
 	}
 
 	results, deduped := mergeResults(providerResults, req)
@@ -160,24 +170,24 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	return response, nil
 }
 
-func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int) []providerExecution {
+func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) []providerExecution {
 	var wg sync.WaitGroup
 	results := make([]providerExecution, len(req.Providers))
 	for index, name := range req.Providers {
 		wg.Add(1)
 		go func(i int, providerName string) {
 			defer wg.Done()
-			results[i] = o.callProvider(ctx, req, providerName, providerLimits, keyRetryCounts)
+			results[i] = o.callProvider(ctx, req, providerName, providerLimits, keyRetryCounts, providerTimeouts, retryableErrors)
 		}(index, name)
 	}
 	wg.Wait()
 	return results
 }
 
-func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int) []providerExecution {
+func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) []providerExecution {
 	results := []providerExecution{}
 	for _, name := range req.Providers {
-		execution := o.callProvider(ctx, req, name, providerLimits, keyRetryCounts)
+		execution := o.callProvider(ctx, req, name, providerLimits, keyRetryCounts, providerTimeouts, retryableErrors)
 		results = append(results, execution)
 		if execution.err == nil && len(execution.results) > 0 {
 			break
@@ -186,14 +196,14 @@ func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchReque
 	return results
 }
 
-func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int) []providerExecution {
+func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) []providerExecution {
 	if len(req.Providers) == 0 {
 		return nil
 	}
-	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerLimits, keyRetryCounts)}
+	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerLimits, keyRetryCounts, providerTimeouts, retryableErrors)}
 }
 
-func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerLimits map[string]int, keyRetryCounts map[string]int) providerExecution {
+func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) providerExecution {
 	started := time.Now()
 	execution := providerExecution{provider: providerName, status: "error"}
 	adapter, ok := o.registry.Get(providerName)
@@ -243,7 +253,13 @@ func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest
 			})
 			return execution
 		}
-		providerResponse, err := adapter.Search(ctx, providerReq, key)
+		callCtx := ctx
+		cancel := func() {}
+		if timeout := providerTimeouts[providerName]; timeout > 0 {
+			callCtx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
+		}
+		providerResponse, err := adapter.Search(callCtx, providerReq, key)
+		cancel()
 		success := err == nil
 		release(success, err)
 		o.refreshOfficialQuota(key)
@@ -263,10 +279,11 @@ func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest
 				Status:       "success",
 				LatencyMS:    attemptLatency,
 				ResultCount:  len(providerResponse.Results),
+				Usage:        providerResponse.Usage,
 			})
 			return execution
 		}
-		willRetry := attempt < attempts-1 && shouldRetryWithNextKey(err)
+		willRetry := attempt < attempts-1 && shouldRetryWithNextKey(err, retryableErrors[providerName])
 		execution.err = err
 		execution.errorType = provider.ErrorType(err)
 		execution.attempts = append(execution.attempts, providerAttempt{
@@ -286,13 +303,17 @@ func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest
 	return execution
 }
 
-func shouldRetryWithNextKey(err error) bool {
-	switch provider.ErrorType(err) {
-	case provider.ErrorTypeAuth, provider.ErrorTypeQuotaExhausted, provider.ErrorTypeRateLimited:
-		return true
-	default:
-		return false
+func shouldRetryWithNextKey(err error, allowed map[string]bool) bool {
+	errorType := provider.ErrorType(err)
+	if len(allowed) == 0 {
+		switch errorType {
+		case provider.ErrorTypeAuth, provider.ErrorTypeQuotaExhausted, provider.ErrorTypeRateLimited:
+			return true
+		default:
+			return false
+		}
 	}
+	return allowed[errorType]
 }
 
 func (o *Orchestrator) refreshOfficialQuota(key model.APIKey) {
@@ -375,6 +396,82 @@ func applyDefaults(req model.SearchRequest, settings model.RuntimeSettings) mode
 	return req
 }
 
+func routeProviders(providers []string, configs []model.ProviderConfig, strategy string) []string {
+	if len(providers) <= 1 {
+		return providers
+	}
+	configByName := map[string]model.ProviderConfig{}
+	for _, item := range configs {
+		configByName[item.Name] = item
+	}
+	ordered := append([]string(nil), providers...)
+	switch strategy {
+	case "priority":
+		sort.SliceStable(ordered, func(i, j int) bool {
+			left := configByName[ordered[i]]
+			right := configByName[ordered[j]]
+			if left.Priority == right.Priority {
+				return ordered[i] < ordered[j]
+			}
+			return left.Priority < right.Priority
+		})
+	case "weighted":
+		sort.SliceStable(ordered, func(i, j int) bool {
+			left := configByName[ordered[i]]
+			right := configByName[ordered[j]]
+			if left.Weight == right.Weight {
+				return left.Priority < right.Priority
+			}
+			return left.Weight > right.Weight
+		})
+	case "random":
+		rand.Shuffle(len(ordered), func(i, j int) { ordered[i], ordered[j] = ordered[j], ordered[i] })
+	case "weighted_random":
+		return weightedProviderOrder(ordered, configByName)
+	case "available_keys":
+		sort.SliceStable(ordered, func(i, j int) bool {
+			left := configByName[ordered[i]]
+			right := configByName[ordered[j]]
+			if left.AvailableKeys == right.AvailableKeys {
+				return left.Priority < right.Priority
+			}
+			return left.AvailableKeys > right.AvailableKeys
+		})
+	}
+	return ordered
+}
+
+func weightedProviderOrder(providers []string, configByName map[string]model.ProviderConfig) []string {
+	remaining := append([]string(nil), providers...)
+	ordered := make([]string, 0, len(providers))
+	for len(remaining) > 0 {
+		totalWeight := 0
+		for _, name := range remaining {
+			weight := configByName[name].Weight
+			if weight <= 0 {
+				weight = 1
+			}
+			totalWeight += weight
+		}
+		pick := rand.Intn(totalWeight)
+		selected := 0
+		for index, name := range remaining {
+			weight := configByName[name].Weight
+			if weight <= 0 {
+				weight = 1
+			}
+			if pick < weight {
+				selected = index
+				break
+			}
+			pick -= weight
+		}
+		ordered = append(ordered, remaining[selected])
+		remaining = append(remaining[:selected], remaining[selected+1:]...)
+	}
+	return ordered
+}
+
 func mergeResults(executions []providerExecution, req model.SearchRequest) ([]model.SearchResult, int) {
 	merged := []model.SearchResult{}
 	seen := map[string]int{}
@@ -440,14 +537,15 @@ func appendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
-func (o *Orchestrator) providerSettings(ctx context.Context) map[string]map[string]interface{} {
-	providers, err := o.store.ListProviders(ctx)
-	if err != nil {
-		return map[string]map[string]interface{}{}
-	}
+func providerSettingsFromProviders(providers []model.ProviderConfig) map[string]map[string]interface{} {
 	settings := map[string]map[string]interface{}{}
 	for _, item := range providers {
-		settings[item.Name] = item.Settings
+		providerSettings := map[string]interface{}{}
+		for key, value := range item.Settings {
+			providerSettings[key] = value
+		}
+		providerSettings["_timeout_ms"] = item.TimeoutMS
+		settings[item.Name] = providerSettings
 	}
 	return settings
 }
@@ -483,6 +581,34 @@ func providerKeyRetryCounts(settings map[string]map[string]interface{}) map[stri
 	return counts
 }
 
+func providerTimeouts(settings map[string]map[string]interface{}) map[string]int {
+	timeouts := map[string]int{}
+	for name, item := range settings {
+		if timeout := intSetting(item, "_timeout_ms"); timeout > 0 {
+			timeouts[name] = timeout
+		}
+	}
+	return timeouts
+}
+
+func providerRetryableErrors(settings map[string]map[string]interface{}) map[string]map[string]bool {
+	result := map[string]map[string]bool{}
+	for name, item := range settings {
+		values := stringListSetting(item, "retry_error_types")
+		if len(values) == 0 {
+			continue
+		}
+		allowed := map[string]bool{}
+		for _, value := range values {
+			if value != "" {
+				allowed[value] = true
+			}
+		}
+		result[name] = allowed
+	}
+	return result
+}
+
 func intSetting(settings map[string]interface{}, key string) int {
 	if settings == nil {
 		return 0
@@ -503,6 +629,37 @@ func intSetting(settings map[string]interface{}, key string) int {
 		_, _ = fmt.Sscanf(typed, "%d", &result)
 	}
 	return result
+}
+
+func stringListSetting(settings map[string]interface{}, key string) []string {
+	if settings == nil {
+		return nil
+	}
+	value, ok := settings[key]
+	if !ok {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		items := []string{}
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				items = append(items, strings.TrimSpace(text))
+			}
+		}
+		return items
+	case string:
+		parts := strings.Split(typed, ",")
+		items := []string{}
+		for _, part := range parts {
+			items = append(items, strings.TrimSpace(part))
+		}
+		return items
+	default:
+		return nil
+	}
 }
 
 func (o *Orchestrator) cacheKey(req model.SearchRequest, providerLimits map[string]int) string {
@@ -544,6 +701,7 @@ type providerAttempt struct {
 	Err          error
 	LatencyMS    int64
 	ResultCount  int
+	Usage        []model.UsageMeasurement
 }
 
 type searchResponseLogPayload struct {
@@ -662,6 +820,7 @@ func callLogs(executions []providerExecution) []model.ProviderCallLog {
 				LatencyMS:     attempt.LatencyMS,
 				ResultCount:   attempt.ResultCount,
 				Cached:        false,
+				Usage:         attempt.Usage,
 			})
 		}
 	}

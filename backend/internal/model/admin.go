@@ -24,6 +24,7 @@ type APIToken struct {
 	Status           string     `json:"status"`
 	RateLimitPerMin  int        `json:"rate_limit_per_min"`
 	DailyQuota       int        `json:"daily_quota"`
+	MonthlyQuota     int        `json:"monthly_quota"`
 	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
 	UsageCount       int64      `json:"usage_count"`
 	CreatedAt        time.Time  `json:"created_at"`
@@ -83,18 +84,27 @@ type SearchLog struct {
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
+type UsageMeasurement struct {
+	Unit     string                 `json:"unit"`
+	Quantity float64                `json:"quantity"`
+	CostUSD  *float64               `json:"cost_usd,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
 type ProviderCallLog struct {
-	ProviderKeyID int64  `json:"provider_key_id"`
-	ProviderName  string `json:"provider_name"`
-	KeyAlias      string `json:"key_alias"`
-	AttemptIndex  int    `json:"attempt_index"`
-	WillRetry     bool   `json:"will_retry"`
-	Status        string `json:"status"`
-	ErrorType     string `json:"error_type"`
-	ErrorMessage  string `json:"error_message"`
-	LatencyMS     int64  `json:"latency_ms"`
-	ResultCount   int    `json:"result_count"`
-	Cached        bool   `json:"cached"`
+	ID            int64              `json:"id,omitempty"`
+	ProviderKeyID int64              `json:"provider_key_id"`
+	ProviderName  string             `json:"provider_name"`
+	KeyAlias      string             `json:"key_alias"`
+	AttemptIndex  int                `json:"attempt_index"`
+	WillRetry     bool               `json:"will_retry"`
+	Status        string             `json:"status"`
+	ErrorType     string             `json:"error_type"`
+	ErrorMessage  string             `json:"error_message"`
+	LatencyMS     int64              `json:"latency_ms"`
+	ResultCount   int                `json:"result_count"`
+	Cached        bool               `json:"cached"`
+	Usage         []UsageMeasurement `json:"usage,omitempty"`
 }
 
 type SearchLogInput struct {
@@ -157,4 +167,62 @@ type ProviderKeyQuotaRequest struct {
 	StartDate     string `json:"start_date"`
 	EndDate       string `json:"end_date"`
 	GroupBy       string `json:"group_by"`
+}
+
+type ProviderHealth struct {
+	ProviderName   string    `json:"provider_name"`
+	DisplayName    string    `json:"display_name"`
+	Enabled        bool      `json:"enabled"`
+	Status         string    `json:"status"`
+	AvailableKeys  int       `json:"available_keys"`
+	TotalKeys      int       `json:"total_keys"`
+	ExhaustedKeys  int       `json:"exhausted_keys"`
+	DisabledKeys   int       `json:"disabled_keys"`
+	CoolingKeys    int       `json:"cooling_keys"`
+	RequestsTotal  int64     `json:"requests_total"`
+	RequestsFailed int64     `json:"requests_failed"`
+	SuccessRate    float64   `json:"success_rate"`
+	LastError      string    `json:"last_error"`
+	LastCheckedAt  time.Time `json:"last_checked_at"`
+	WindowMinutes  int       `json:"window_minutes"`
+}
+
+type UsageUnitSummary struct {
+	ProviderName  string  `json:"provider_name"`
+	Unit          string  `json:"unit"`
+	QuantityTotal float64 `json:"quantity_total"`
+	CostUSDTotal  float64 `json:"cost_usd_total"`
+}
+
+type BillingSummary struct {
+	Days  int                `json:"days"`
+	Units []UsageUnitSummary `json:"units"`
+}
+
+type GatewayMetrics struct {
+	Usage          UsageSummary     `json:"usage"`
+	ProviderHealth []ProviderHealth `json:"provider_health"`
+	Billing        BillingSummary   `json:"billing"`
+}
+
+type AuditLog struct {
+	ID           int64                  `json:"id"`
+	RequestID    string                 `json:"request_id"`
+	Actor        string                 `json:"actor"`
+	Action       string                 `json:"action"`
+	ResourceType string                 `json:"resource_type"`
+	ResourceID   string                 `json:"resource_id"`
+	IPAddress    string                 `json:"ip_address"`
+	Metadata     map[string]interface{} `json:"metadata"`
+	CreatedAt    time.Time              `json:"created_at"`
+}
+
+type AuditLogInput struct {
+	RequestID    string
+	Actor        string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	IPAddress    string
+	Metadata     map[string]interface{}
 }

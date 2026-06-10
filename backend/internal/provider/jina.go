@@ -37,7 +37,7 @@ func (p *JinaProvider) Search(ctx context.Context, req model.SearchRequest, key 
 		return model.ProviderResponse{}, err
 	}
 	results := normalizeJinaResults(payload, req.IncludeRaw)
-	return model.ProviderResponse{Results: results, Raw: payload}, nil
+	return model.ProviderResponse{Results: results, Usage: usageMeasurements(model.ProviderJina, payload), Raw: payload}, nil
 }
 
 func normalizeJinaResults(payload map[string]interface{}, includeRaw bool) []model.SearchResult {

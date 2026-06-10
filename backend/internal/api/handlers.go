@@ -28,15 +28,19 @@ type AppStore interface {
 	UpdateProviderKey(ctx context.Context, id int64, patch model.ProviderKeyUpdate) (model.ProviderKeyView, error)
 	DeleteProviderKey(ctx context.Context, id int64) error
 	ListAPITokens(ctx context.Context) ([]model.APIToken, error)
-	CreateAPIToken(ctx context.Context, name string, scopes []string, allowedProviders []string, rateLimit, dailyQuota int) (model.APIToken, string, error)
+	CreateAPIToken(ctx context.Context, name string, scopes []string, allowedProviders []string, rateLimit, dailyQuota, monthlyQuota int) (model.APIToken, string, error)
 	UpdateAPITokenStatus(ctx context.Context, id int64, status string) error
-	UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota int) error
+	UpdateAPIToken(ctx context.Context, id int64, name string, allowedProviders []string, rateLimit, dailyQuota, monthlyQuota int) error
 	DeleteAPIToken(ctx context.Context, id int64) error
 	UpdateRuntimeSettings(ctx context.Context, settings model.RuntimeSettings) error
 	ListSearchLogs(ctx context.Context, limit int) ([]model.SearchLog, error)
 	GetSearchLog(ctx context.Context, id int64) (model.SearchLog, []model.ProviderCallLog, error)
 	GetSearchLogByRequestID(ctx context.Context, requestID string) (model.SearchLog, []model.ProviderCallLog, error)
 	UsageSummary(ctx context.Context) (model.UsageSummary, error)
+	BillingSummary(ctx context.Context, days int) (model.BillingSummary, error)
+	ProviderHealth(ctx context.Context, windowMinutes int) ([]model.ProviderHealth, error)
+	RecordAuditLog(ctx context.Context, input model.AuditLogInput) error
+	ListAuditLogs(ctx context.Context, limit int) ([]model.AuditLog, error)
 }
 
 type Handler struct {
@@ -66,6 +70,7 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Get("/me", h.me)
 			r.Get("/dashboard", h.dashboard)
 			r.Get("/providers", h.adminProviders)
+			r.Get("/providers/health", h.providerHealth)
 			r.Patch("/providers/{name}", h.updateProvider)
 			r.Get("/keys", h.listKeys)
 			r.Post("/keys", h.createKey)
@@ -82,6 +87,9 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Get("/logs", h.logs)
 			r.Get("/logs/{id}", h.logDetail)
 			r.Get("/usage/summary", h.usageSummary)
+			r.Get("/usage/billing", h.billingSummary)
+			r.Get("/metrics", h.metrics)
+			r.Get("/audit-logs", h.auditLogs)
 			r.Post("/playground/search", h.adminSearch)
 		})
 	})
@@ -99,16 +107,24 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.LimitExplicit = hasJSONField(body, "limit")
+	req.ProvidersExplicit = hasJSONField(body, "providers")
 	req.CompatFormat = model.CompatFormatNative
 	h.runSearch(w, r, req)
 }
 
 func (h *Handler) adminSearch(w http.ResponseWriter, r *http.Request) {
+	body, err := readBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
 	var req model.SearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	req.LimitExplicit = hasJSONField(body, "limit")
+	req.ProvidersExplicit = hasJSONField(body, "providers")
 	req.CompatFormat = model.CompatFormatNative
 	requestID := RequestID(r.Context())
 	response, err := h.orchestrator.Search(r.Context(), req, requestID, 0)
@@ -148,6 +164,7 @@ func (h *Handler) tavilySearch(w http.ResponseWriter, r *http.Request) {
 	}
 	native := compat.TavilyToNative(req)
 	native.LimitExplicit = hasJSONField(body, "max_results")
+	native.ProvidersExplicit = hasJSONField(body, "providers")
 	response, err := h.orchestrator.Search(r.Context(), native, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -178,6 +195,7 @@ func (h *Handler) serperSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	native := compat.SerperToNative(req)
 	native.LimitExplicit = hasJSONField(body, "num")
+	native.ProvidersExplicit = hasJSONField(body, "providers")
 	response, err := h.orchestrator.Search(r.Context(), native, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -208,6 +226,7 @@ func (h *Handler) openAISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	native := compat.OpenAIToNative(req)
 	native.LimitExplicit = hasJSONField(body, "limit")
+	native.ProvidersExplicit = hasJSONField(body, "providers")
 	response, err := h.orchestrator.Search(r.Context(), native, RequestID(r.Context()), APITokenID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -255,6 +274,56 @@ func (h *Handler) usageSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
+func (h *Handler) billingSummary(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	summary, err := h.store.BillingSummary(r.Context(), days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (h *Handler) providerHealth(w http.ResponseWriter, r *http.Request) {
+	settings, _ := h.store.RuntimeSettings(r.Context())
+	health, err := h.store.ProviderHealth(r.Context(), settings.ProviderHealthWindowMinutes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"providers": health})
+}
+
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
+	settings, _ := h.store.RuntimeSettings(r.Context())
+	usage, err := h.store.UsageSummary(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	health, err := h.store.ProviderHealth(r.Context(), settings.ProviderHealthWindowMinutes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	billing, err := h.store.BillingSummary(r.Context(), 30)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, model.GatewayMetrics{Usage: usage, ProviderHealth: health, Billing: billing})
+}
+
+func (h *Handler) auditLogs(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := h.store.ListAuditLogs(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"logs": items})
+}
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
@@ -269,6 +338,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+	h.audit(r, req.Username, "admin.login", "session", "", nil)
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
@@ -277,9 +347,12 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
+	settings, _ := h.store.RuntimeSettings(r.Context())
 	summary, _ := h.store.UsageSummary(r.Context())
 	providers, _ := h.store.ListProviders(r.Context())
-	writeJSON(w, http.StatusOK, map[string]interface{}{"usage": summary, "providers": providers})
+	health, _ := h.store.ProviderHealth(r.Context(), settings.ProviderHealthWindowMinutes)
+	billing, _ := h.store.BillingSummary(r.Context(), 30)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"usage": summary, "providers": providers, "provider_health": health, "billing": billing})
 }
 
 func (h *Handler) adminProviders(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +370,7 @@ func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "provider.update", "provider", req.Name, map[string]interface{}{"enabled": req.Enabled, "timeout_ms": req.TimeoutMS})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -335,6 +409,7 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "provider_key.create", "provider_key", strconv.FormatInt(key.ID, 10), map[string]interface{}{"provider": key.ProviderName, "alias": key.Alias})
 	writeJSON(w, http.StatusCreated, key)
 }
 
@@ -354,6 +429,7 @@ func (h *Handler) updateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "provider_key.update", "provider_key", strconv.FormatInt(id, 10), map[string]interface{}{"provider": key.ProviderName, "alias": key.Alias, "status": key.Status})
 	writeJSON(w, http.StatusOK, key)
 }
 
@@ -373,6 +449,7 @@ func (h *Handler) testKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status = http.StatusBadGateway
 	}
+	h.audit(r, "admin", "provider_key.test", "provider_key", strconv.FormatInt(id, 10), map[string]interface{}{"status": summary.Status, "error_type": summary.ErrorType})
 	writeJSON(w, status, map[string]interface{}{"summary": summary, "results": results})
 }
 
@@ -386,6 +463,7 @@ func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "provider_key.delete", "provider_key", strconv.FormatInt(id, 10), nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -405,16 +483,18 @@ func (h *Handler) createToken(w http.ResponseWriter, r *http.Request) {
 		AllowedProviders []string `json:"allowed_providers"`
 		RateLimitPerMin  int      `json:"rate_limit_per_min"`
 		DailyQuota       int      `json:"daily_quota"`
+		MonthlyQuota     int      `json:"monthly_quota"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	token, raw, err := h.store.CreateAPIToken(r.Context(), req.Name, req.Scopes, req.AllowedProviders, req.RateLimitPerMin, req.DailyQuota)
+	token, raw, err := h.store.CreateAPIToken(r.Context(), req.Name, req.Scopes, req.AllowedProviders, req.RateLimitPerMin, req.DailyQuota, req.MonthlyQuota)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "api_token.create", "api_token", strconv.FormatInt(token.ID, 10), map[string]interface{}{"name": token.Name, "rate_limit_per_min": token.RateLimitPerMin, "daily_quota": token.DailyQuota, "monthly_quota": token.MonthlyQuota})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"token": token, "raw_token": raw})
 }
 
@@ -429,6 +509,7 @@ func (h *Handler) updateToken(w http.ResponseWriter, r *http.Request) {
 		AllowedProviders []string `json:"allowed_providers"`
 		RateLimitPerMin  int      `json:"rate_limit_per_min"`
 		DailyQuota       int      `json:"daily_quota"`
+		MonthlyQuota     int      `json:"monthly_quota"`
 		Status           string   `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -436,15 +517,17 @@ func (h *Handler) updateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name != "" {
-		if err := h.store.UpdateAPIToken(r.Context(), id, req.Name, req.AllowedProviders, req.RateLimitPerMin, req.DailyQuota); err != nil {
+		if err := h.store.UpdateAPIToken(r.Context(), id, req.Name, req.AllowedProviders, req.RateLimitPerMin, req.DailyQuota, req.MonthlyQuota); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		h.audit(r, "admin", "api_token.update", "api_token", strconv.FormatInt(id, 10), map[string]interface{}{"name": req.Name, "rate_limit_per_min": req.RateLimitPerMin, "daily_quota": req.DailyQuota, "monthly_quota": req.MonthlyQuota})
 	} else if req.Status != "" {
 		if err := h.store.UpdateAPITokenStatus(r.Context(), id, req.Status); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		h.audit(r, "admin", "api_token.status", "api_token", strconv.FormatInt(id, 10), map[string]interface{}{"status": req.Status})
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -459,6 +542,7 @@ func (h *Handler) deleteToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "api_token.delete", "api_token", strconv.FormatInt(id, 10), nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -481,6 +565,7 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit(r, "admin", "settings.update", "settings", "runtime", map[string]interface{}{"request_timeout_ms": settings.RequestTimeoutMS, "api_auth_required": settings.APIAuthRequired})
 	writeJSON(w, http.StatusOK, settings)
 }
 
@@ -524,6 +609,21 @@ func hasJSONField(body []byte, field string) bool {
 	}
 	_, ok := payload[field]
 	return ok
+}
+
+func (h *Handler) audit(r *http.Request, actor, action, resourceType, resourceID string, metadata map[string]interface{}) {
+	if action == "" {
+		return
+	}
+	_ = h.store.RecordAuditLog(context.Background(), model.AuditLogInput{
+		RequestID:    RequestID(r.Context()),
+		Actor:        actor,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		IPAddress:    r.RemoteAddr,
+		Metadata:     metadata,
+	})
 }
 
 func applyTokenProviders(requested, allowed []string) ([]string, error) {
