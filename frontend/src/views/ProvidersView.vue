@@ -175,6 +175,12 @@
                   <div class="advanced-field-label">换 key 重试</div>
                   <el-input-number v-model="providerKeyRetryCount" :min="0" :max="20" controls-position="right" />
                 </div>
+                <div class="advanced-field">
+                  <div class="advanced-field-label">渠道并发</div>
+                  <el-tooltip content="0 表示不限，正数表示该渠道最大并发请求数" placement="top">
+                    <el-input-number v-model="providerMaxConcurrency" :min="0" :max="999" controls-position="right" />
+                  </el-tooltip>
+                </div>
                 <div class="advanced-field advanced-field-wide">
                   <div class="advanced-field-label">Key 路由策略</div>
                   <el-select v-model="providerKeyRoutingStrategy">
@@ -253,7 +259,7 @@ const providerCards = computed<ProviderCard[]>(() => providers.value.map((provid
   return { ...provider, keyCount: ownedKeys.length, enabledKeyCount: ownedKeys.filter((item) => item.status === 'enabled').length, totalSuccess, totalFailure, totalCalls: totalSuccess + totalFailure }
 }))
 const selectedKeys = computed(() => providerForm.value ? keys.value.filter((item) => item.provider_name === providerForm.value?.name) : [])
-const tableKeys = computed<EditableKey[]>(() => creatingRow.value ? [{ id: 0, provider_id: 0, provider_name: providerForm.value?.name || '', alias: '', key_hint: '', exa_service_key_hint: '', status: 'enabled', weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0, max_concurrency: 1, current_failures: 0, total_successes: 0, total_failures: 0, daily_used: 0, monthly_used: 0, official_quota_status: '', official_quota_message: '', official_quota_unit: '', created_at: '', updated_at: '', isNew: true }, ...selectedKeys.value] : selectedKeys.value)
+const tableKeys = computed<EditableKey[]>(() => creatingRow.value ? [{ id: 0, provider_id: 0, provider_name: providerForm.value?.name || '', alias: '', key_hint: '', exa_service_key_hint: '', status: 'enabled', weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0, max_concurrency: 0, current_failures: 0, total_successes: 0, total_failures: 0, daily_used: 0, monthly_used: 0, official_quota_status: '', official_quota_message: '', official_quota_unit: '', created_at: '', updated_at: '', isNew: true }, ...selectedKeys.value] : selectedKeys.value)
 const dialogTitle = computed(() => providerForm.value ? `编辑 ${providerForm.value.display_name}` : '编辑平台')
 const providerRequestLimit = computed({
   get() {
@@ -273,6 +279,15 @@ const providerKeyRetryCount = computed({
   set(value: number) {
     if (!providerForm.value) return
     providerForm.value.settings = { ...(providerForm.value.settings || {}), key_retry_count: value }
+  }
+})
+const providerMaxConcurrency = computed({
+  get() {
+    return normalizeMaxConcurrency(providerForm.value?.settings?.max_concurrency)
+  },
+  set(value: number) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), max_concurrency: normalizeMaxConcurrency(value) }
   }
 })
 const providerRetryErrorTypes = computed<string[]>({
@@ -321,6 +336,12 @@ function formatCurrency(value?: number) {
 function successRate(row: EditableKey) {
   const total = row.total_successes + row.total_failures
   return total > 0 ? Math.round((row.total_successes / total) * 100) : 0
+}
+
+function normalizeMaxConcurrency(value: unknown) {
+  const numeric = Number(value ?? 0)
+  if (!Number.isFinite(numeric) || numeric < 0) return 0
+  return Math.trunc(numeric)
 }
 
 function quotaMetaText(row: EditableKey) {
@@ -372,7 +393,7 @@ async function load() {
 
 function openProvider(provider: ProviderConfig) {
   const next = { ...JSON.parse(JSON.stringify(provider)), default_cache_enabled: false }
-  next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10), key_retry_count: Number(next.settings?.key_retry_count ?? 3) }
+  next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10), key_retry_count: Number(next.settings?.key_retry_count ?? 3), max_concurrency: normalizeMaxConcurrency(next.settings?.max_concurrency) }
   providerForm.value = next
   creatingRow.value = false
   draftKey.value = ''
@@ -419,7 +440,7 @@ async function createKey() {
   if (providerForm.value.name === 'exa' && !draftExaServiceKey.value.trim()) { ElMessage.warning('请填写 Exa x-api-key'); return }
   creatingKey.value = true
   try {
-    await api.createKey({ provider_name: providerForm.value.name, alias: `${providerForm.value.name}-${Date.now()}`, key: draftKey.value.trim(), exa_service_key: draftExaServiceKey.value.trim(), weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0, max_concurrency: 1 })
+    await api.createKey({ provider_name: providerForm.value.name, alias: `${providerForm.value.name}-${Date.now()}`, key: draftKey.value.trim(), exa_service_key: draftExaServiceKey.value.trim(), weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0 })
     ElMessage.success('密钥已添加')
     cancelCreateKey()
     await load()

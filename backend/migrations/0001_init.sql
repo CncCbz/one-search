@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS provider_keys (
     rpm_limit INTEGER NOT NULL DEFAULT 0,
     daily_quota INTEGER NOT NULL DEFAULT 0,
     monthly_quota INTEGER NOT NULL DEFAULT 0,
-    max_concurrency INTEGER NOT NULL DEFAULT 1,
+    max_concurrency INTEGER NOT NULL DEFAULT 0,
     current_failures INTEGER NOT NULL DEFAULT 0,
     total_successes BIGINT NOT NULL DEFAULT 0,
     total_failures BIGINT NOT NULL DEFAULT 0,
@@ -177,13 +177,13 @@ CREATE INDEX IF NOT EXISTS idx_usage_meter_daily_date ON usage_meter_daily(usage
 
 INSERT INTO providers (name, display_name, base_url, priority, weight, timeout_ms, default_cache_enabled, cache_ttl_seconds, settings)
 VALUES
-    ('exa', 'Exa', 'https://api.exa.ai', 10, 1, 12000, FALSE, 86400, '{"type":"neural","key_retry_count":3}'::jsonb),
-    ('you', 'You.com', 'https://ydc-index.io', 20, 1, 10000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
-    ('jina', 'Jina', 'https://s.jina.ai', 30, 1, 15000, FALSE, 21600, '{"key_retry_count":3}'::jsonb),
-    ('tavily', 'Tavily', 'https://api.tavily.com', 40, 1, 15000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
-    ('firecrawl', 'Firecrawl', 'https://api.firecrawl.dev', 50, 1, 30000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
-    ('serper', 'Serper', 'https://google.serper.dev', 60, 1, 15000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
-    ('brave', 'Brave Search', 'https://api.search.brave.com/res/v1', 70, 1, 15000, FALSE, 3600, '{"key_retry_count":3}'::jsonb)
+    ('exa', 'Exa', 'https://api.exa.ai', 10, 1, 12000, FALSE, 86400, '{"type":"neural","key_retry_count":3,"max_concurrency":0}'::jsonb),
+    ('you', 'You.com', 'https://ydc-index.io', 20, 1, 10000, FALSE, 3600, '{"key_retry_count":3,"max_concurrency":0}'::jsonb),
+    ('jina', 'Jina', 'https://s.jina.ai', 30, 1, 15000, FALSE, 21600, '{"key_retry_count":3,"max_concurrency":0}'::jsonb),
+    ('tavily', 'Tavily', 'https://api.tavily.com', 40, 1, 15000, FALSE, 3600, '{"key_retry_count":3,"max_concurrency":0}'::jsonb),
+    ('firecrawl', 'Firecrawl', 'https://api.firecrawl.dev', 50, 1, 30000, FALSE, 3600, '{"key_retry_count":3,"max_concurrency":0}'::jsonb),
+    ('serper', 'Serper', 'https://google.serper.dev', 60, 1, 15000, FALSE, 3600, '{"key_retry_count":3,"max_concurrency":0}'::jsonb),
+    ('brave', 'Brave Search', 'https://api.search.brave.com/res/v1', 70, 1, 15000, FALSE, 3600, '{"key_retry_count":3,"max_concurrency":0}'::jsonb)
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO settings (key, value)

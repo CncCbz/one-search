@@ -13,15 +13,16 @@ import (
 
 type Store interface {
 	ListAvailableProviderKeys(ctx context.Context, providerName string) ([]model.APIKey, error)
-	ProviderKeyRoutingStrategy(ctx context.Context, providerName string) (string, error)
+	ProviderKeySettings(ctx context.Context, providerName string) (string, int, error)
 	RecordKeyResult(ctx context.Context, key model.APIKey, success bool, errorType string) error
 }
 
 type Manager struct {
-	store     Store
-	mu        sync.Mutex
-	positions map[string]int
-	states    map[int64]*keyState
+	store          Store
+	mu             sync.Mutex
+	positions      map[string]int
+	states         map[int64]*keyState
+	providerStates map[string]*providerState
 }
 
 type keyState struct {
@@ -30,9 +31,13 @@ type keyState struct {
 	windowCount int
 }
 
+type providerState struct {
+	active int
+}
+
 func NewManager(store Store) *Manager {
 	rand.Seed(time.Now().UnixNano())
-	return &Manager{store: store, positions: map[string]int{}, states: map[int64]*keyState{}}
+	return &Manager{store: store, positions: map[string]int{}, states: map[int64]*keyState{}, providerStates: map[string]*providerState{}}
 }
 
 func (m *Manager) Acquire(ctx context.Context, providerName string) (model.APIKey, func(bool, error), error) {
@@ -44,13 +49,17 @@ func (m *Manager) Acquire(ctx context.Context, providerName string) (model.APIKe
 		return model.APIKey{}, nil, &provider.Error{Type: provider.ErrorTypeNoKey, Message: "no available key for " + providerName}
 	}
 
-	strategy, err := m.store.ProviderKeyRoutingStrategy(ctx, providerName)
+	strategy, maxConcurrency, err := m.store.ProviderKeySettings(ctx, providerName)
 	if err != nil {
 		return model.APIKey{}, nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
+	providerState := m.providerStateFor(providerName)
+	if maxConcurrency > 0 && providerState.active >= maxConcurrency {
+		return model.APIKey{}, nil, &provider.Error{Type: provider.ErrorTypeRateLimited, Message: "all keys are limited or busy for " + providerName}
+	}
 	keys = m.orderKeys(providerName, keys, strategy)
 	start := m.startIndex(providerName, strategy)
 	for attempt := 0; attempt < len(keys); attempt++ {
@@ -62,6 +71,7 @@ func (m *Manager) Acquire(ctx context.Context, providerName string) (model.APIKe
 		}
 		state.active++
 		state.windowCount++
+		providerState.active++
 		if m.usesPosition(strategy) {
 			m.positions[providerName] = (index + 1) % len(keys)
 		}
@@ -72,6 +82,9 @@ func (m *Manager) Acquire(ctx context.Context, providerName string) (model.APIKe
 				released = true
 				if state.active > 0 {
 					state.active--
+				}
+				if providerState.active > 0 {
+					providerState.active--
 				}
 			}
 			m.mu.Unlock()
@@ -165,10 +178,16 @@ func (m *Manager) stateFor(keyID int64) *keyState {
 	return state
 }
 
-func (m *Manager) canUse(state *keyState, key model.APIKey, now time.Time) bool {
-	if key.MaxConcurrency > 0 && state.active >= key.MaxConcurrency {
-		return false
+func (m *Manager) providerStateFor(providerName string) *providerState {
+	state := m.providerStates[providerName]
+	if state == nil {
+		state = &providerState{}
+		m.providerStates[providerName] = state
 	}
+	return state
+}
+
+func (m *Manager) canUse(state *keyState, key model.APIKey, now time.Time) bool {
 	if key.RPMLimit > 0 {
 		if now.Sub(state.windowStart) >= time.Minute {
 			state.windowStart = now

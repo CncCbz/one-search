@@ -142,12 +142,12 @@ curl "$BASE_URL/api/admin/dashboard" \
 | `GET` | `/api/admin/dashboard` | 可以 | 获取用量、Provider、Provider 健康度、30 天账单摘要。 |
 | `GET` | `/api/admin/providers` | 可以 | 获取 Provider 配置列表。 |
 | `GET` | `/api/admin/providers/health` | 可以 | 获取 Provider 健康状态。 |
-| `PATCH` | `/api/admin/providers/{name}` | 可以 | 更新 Provider 配置。`name` 为 `exa`、`you`、`jina`。 |
+| `PATCH` | `/api/admin/providers/{name}` | 可以 | 更新 Provider 配置。`name` 为内置 Provider 名，例如 `exa`、`you`、`jina`、`tavily`、`firecrawl`、`serper`、`brave`。 |
 | `GET` | `/api/admin/keys` | 可以 | 获取 Provider Key 列表，只返回脱敏信息。 |
 | `POST` | `/api/admin/keys` | 可以 | 创建 Provider Key。 |
 | `PATCH` | `/api/admin/keys/{id}` | 可以 | 更新 Provider Key。 |
 | `POST` | `/api/admin/keys/{id}/test` | 可以 | 使用指定 Provider Key 发起测试搜索。 |
-| `POST` | `/api/admin/keys/{id}/quota` | 可以 | 查询并保存该 Key 的官方额度/账单信息。 |
+| `POST` | `/api/admin/keys/{id}/quota` | 可以 | 查询并保存该 Key 的官方额度/账单信息或本地估算额度。 |
 | `DELETE` | `/api/admin/keys/{id}` | 可以 | 删除 Provider Key。 |
 | `GET` | `/api/admin/tokens` | 可以 | 获取外部 API Token 列表，只返回前缀和配置。 |
 | `POST` | `/api/admin/tokens` | 可以 | 创建外部 API Token，响应中的 `raw_token` 只显示一次。 |
@@ -226,7 +226,7 @@ curl "$BASE_URL/api/admin/providers" \
       "timeout_ms": 12000,
       "default_cache_enabled": false,
       "cache_ttl_seconds": 86400,
-      "settings": { "key_retry_count": 3 },
+      "settings": { "key_retry_count": 3, "max_concurrency": 0 },
       "available_keys": 1
     }
   ]
@@ -250,6 +250,7 @@ curl -X PATCH "$BASE_URL/api/admin/providers/exa" \
     "cache_ttl_seconds": 86400,
     "settings": {
       "key_retry_count": 3,
+      "max_concurrency": 0,
       "request_result_limit": 10,
       "retry_error_types": ["auth", "quota_exhausted", "rate_limited"],
       "key_routing_strategy": "weighted_random"
@@ -263,7 +264,7 @@ curl -X PATCH "$BASE_URL/api/admin/providers/exa" \
 {"status":"ok"}
 ```
 
-说明：`PATCH /api/admin/providers/{name}` 会按请求体覆盖该 Provider 的主要配置字段，因此建议先 `GET /api/admin/providers`，在原对象基础上修改后再提交。
+说明：`PATCH /api/admin/providers/{name}` 会按请求体覆盖该 Provider 的主要配置字段，因此建议先 `GET /api/admin/providers`，在原对象基础上修改后再提交。`settings.max_concurrency` 是渠道级最大并发请求数，`0` 表示不限，正数表示该 Provider 同时在途请求上限。
 
 ### 5.4 创建 Provider Key
 
@@ -280,8 +281,7 @@ curl -X POST "$BASE_URL/api/admin/keys" \
     "weight": 1,
     "rpm_limit": 60,
     "daily_quota": 0,
-    "monthly_quota": 0,
-    "max_concurrency": 2
+    "monthly_quota": 0
   }'
 ```
 
@@ -300,8 +300,7 @@ curl -X POST "$BASE_URL/api/admin/keys" \
     "weight": 1,
     "rpm_limit": 60,
     "daily_quota": 0,
-    "monthly_quota": 0,
-    "max_concurrency": 2
+    "monthly_quota": 0
   }'
 ```
 
@@ -309,7 +308,7 @@ curl -X POST "$BASE_URL/api/admin/keys" \
 
 | 字段 | 说明 |
 | --- | --- |
-| `provider_name` | `exa`、`you`、`jina`。 |
+| `provider_name` | 内置 Provider 名：`exa`、`you`、`jina`、`tavily`、`firecrawl`、`serper`、`brave`。 |
 | `alias` | Key 别名。同一 Provider 下唯一。 |
 | `key` | 上游搜索 API Key，会加密存储。 |
 | `exa_api_key_id` | Exa 官方 usage 查询使用的 API Key ID。Exa 可选但建议填写。 |
@@ -318,7 +317,6 @@ curl -X POST "$BASE_URL/api/admin/keys" \
 | `rpm_limit` | 单 Key 每分钟限制，0 表示不限。 |
 | `daily_quota` | 单 Key 日请求额度，0 表示不限。 |
 | `monthly_quota` | 单 Key 月请求额度，0 表示不限。 |
-| `max_concurrency` | 单 Key 最大并发，默认 1。 |
 
 ### 5.5 更新 Provider Key
 
@@ -332,8 +330,7 @@ curl -X PATCH "$BASE_URL/api/admin/keys/1" \
     "weight": 2,
     "rpm_limit": 120,
     "daily_quota": 5000,
-    "monthly_quota": 100000,
-    "max_concurrency": 3
+    "monthly_quota": 100000
   }'
 ```
 
@@ -348,7 +345,6 @@ curl -X PATCH "$BASE_URL/api/admin/keys/1" \
 - `rpm_limit`
 - `daily_quota`
 - `monthly_quota`
-- `max_concurrency`
 
 ### 5.6 测试 Provider Key
 
@@ -367,7 +363,7 @@ curl -X POST "$BASE_URL/api/admin/keys/1/test" \
 - `summary`：状态、错误类型、延迟、结果数等。
 - `results`：归一化后的搜索结果。
 
-### 5.7 查询官方额度/账单
+### 5.7 查询额度/账单
 
 ```bash
 curl -X POST "$BASE_URL/api/admin/keys/1/quota" \
@@ -396,6 +392,10 @@ curl -X POST "$BASE_URL/api/admin/keys/1/quota" \
 | `exa` | Team Management usage API | 指定周期用量/费用，不是剩余额度。 |
 | `you` | Billing account balance API | 账户余额，单位 cents/USD。 |
 | `jina` | `https://r.jina.ai/` 文本解析 | 解析 `Balance left`，单位 tokens。 |
+| `tavily` | `GET https://api.tavily.com/usage` | 返回当前 Key usage/limit，按 credits 展示剩余额度。 |
+| `firecrawl` | `GET https://api.firecrawl.dev/v2/team/credit-usage` | 返回团队 remainingCredits/planCredits 和账期。 |
+| `serper` | 本地累计用量估算 | Serper 未公开独立余额接口；按默认总额度 2500 credits 减本地累计 credits 估算剩余额度，不额外请求上游。 |
+| `brave` | `GET https://api.search.brave.com/res/v1/web/search` | Brave 通过 `X-RateLimit-*` 响应头返回剩余请求额度；查询本身会消耗一次成功请求。 |
 
 ### 5.8 创建外部 API Token
 
@@ -447,7 +447,7 @@ curl -X PATCH "$BASE_URL/api/admin/tokens/1" \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "client-a",
-    "allowed_providers": ["exa", "you", "jina"],
+    "allowed_providers": ["exa", "you", "jina", "tavily", "firecrawl", "serper", "brave"],
     "rate_limit_per_min": 120,
     "daily_quota": 2000,
     "monthly_quota": 60000
@@ -482,7 +482,7 @@ curl -X PUT "$BASE_URL/api/admin/settings" \
   -H 'Content-Type: application/json' \
   -d '{
     "default_mode": "parallel",
-    "default_providers": ["exa", "you", "jina"],
+    "default_providers": ["exa", "you", "jina", "tavily", "firecrawl", "serper", "brave"],
     "default_limit": 10,
     "default_dedupe": true,
     "request_timeout_ms": 20000,
@@ -504,7 +504,7 @@ curl -X PUT "$BASE_URL/api/admin/settings" \
 | 字段 | 说明 |
 | --- | --- |
 | `default_mode` | 默认搜索模式：`parallel`、`fallback`、`single`。 |
-| `default_providers` | 默认 Provider 列表。 |
+| `default_providers` | 默认 Provider 列表；新库初始化和默认 fallback 为 `exa`、`you`、`jina`、`tavily`、`firecrawl`、`serper`、`brave`。 |
 | `default_limit` | 默认返回结果数，搜索时最大限制为 50。 |
 | `default_dedupe` | 是否默认去重。 |
 | `request_timeout_ms` | 单次搜索总超时。 |
@@ -520,6 +520,8 @@ curl -X PUT "$BASE_URL/api/admin/settings" \
 | `log_retention_days` | 搜索日志和审计日志保留天数。 |
 
 ### 5.11 查看日志和审计日志
+
+管理台的仪表盘、搜索日志和审计日志表格会限制在右侧内容区域内滚动，避免内容较多时触发浏览器全局滚动条。
 
 搜索日志列表：
 
@@ -571,7 +573,7 @@ curl -X POST "$BASE_URL/v1/search" \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "latest web search APIs",
-    "providers": ["exa", "you", "jina"],
+    "providers": ["exa", "you", "jina", "tavily", "firecrawl", "serper", "brave"],
     "mode": "parallel",
     "limit": 10,
     "cache": "default",

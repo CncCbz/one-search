@@ -205,13 +205,20 @@ func (s *Store) UpdateProvider(ctx context.Context, provider model.ProviderConfi
 	return err
 }
 
-func (s *Store) ProviderKeyRoutingStrategy(ctx context.Context, providerName string) (string, error) {
+func (s *Store) ProviderKeySettings(ctx context.Context, providerName string) (string, int, error) {
 	var strategy string
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(settings->>'key_routing_strategy', '') FROM providers WHERE name=$1`, providerName).Scan(&strategy)
+	var maxConcurrency int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(settings->>'key_routing_strategy', ''), COALESCE((settings->>'max_concurrency')::int, 0)
+		FROM providers WHERE name=$1
+	`, providerName).Scan(&strategy, &maxConcurrency)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "", 0, nil
 	}
-	return strategy, err
+	if maxConcurrency < 0 {
+		maxConcurrency = 0
+	}
+	return strategy, maxConcurrency, err
 }
 
 func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName string) ([]model.APIKey, error) {
@@ -1101,8 +1108,8 @@ func weightOrDefault(value int) int {
 }
 
 func concurrencyOrDefault(value int) int {
-	if value <= 0 {
-		return 1
+	if value < 0 {
+		return 0
 	}
 	return value
 }
