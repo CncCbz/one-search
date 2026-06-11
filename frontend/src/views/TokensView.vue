@@ -19,7 +19,7 @@
           <template #default="scope">
             <div class="token-cell">
               <span>{{ displayToken(scope.row) }}</span>
-              <el-button link type="primary" @click="copyText(scope.row.token || scope.row.token_prefix)">复制</el-button>
+              <span class="token-hint">完整令牌仅创建时显示</span>
             </div>
           </template>
         </el-table-column>
@@ -72,7 +72,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { api, ApiToken } from '../api/client'
 
 const providerOptions = [
@@ -95,7 +95,7 @@ function providerLabel(provider: string) {
 }
 
 function displayToken(token: ApiToken) {
-  return token.token || `${token.token_prefix}...`
+  return token.token ? token.token : `${token.token_prefix}...`
 }
 
 function resetForm() {
@@ -159,5 +159,6 @@ onMounted(load)
 <style scoped>
 .token-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .token-cell span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.token-hint { color: var(--el-text-color-secondary); font-family: inherit !important; font-size: 12px; }
 .provider-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 </style>

@@ -20,7 +20,9 @@ func NewServer(cfg config.Config, log requestLogger) *Server {
 	r := chi.NewRouter()
 	r.Use(requestIDMiddleware)
 	r.Use(middleware.RealIP)
+	r.Use(securityHeadersMiddleware)
 	r.Use(corsMiddleware(cfg.CorsOrigins))
+	r.Use(bodyLimitMiddleware(cfg.RequestBodyLimitBytes))
 	r.Use(loggingMiddleware(log))
 	r.Get("/healthz", server.healthz)
 	server.router = r

@@ -35,12 +35,17 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { SwitchButton } from '@element-plus/icons-vue'
+import { api } from './api/client'
 import { useSessionStore } from './stores/session'
 
 const router = useRouter()
 const session = useSessionStore()
-function logout() {
-  session.logout()
-  router.push('/login')
+async function logout() {
+  try {
+    await api.logout()
+  } finally {
+    session.logout()
+    router.push('/login')
+  }
 }
 </script>

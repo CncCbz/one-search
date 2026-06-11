@@ -14,6 +14,7 @@ import (
 	"github.com/one-search/one-search/backend/internal/db"
 	"github.com/one-search/one-search/backend/internal/keypool"
 	"github.com/one-search/one-search/backend/internal/logging"
+	"github.com/one-search/one-search/backend/internal/model"
 	"github.com/one-search/one-search/backend/internal/provider"
 	"github.com/one-search/one-search/backend/internal/search"
 	"github.com/one-search/one-search/backend/internal/security"
@@ -21,8 +22,12 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
 	log := logging.New()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Error("config_invalid", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
 	ctx := context.Background()
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
@@ -41,24 +46,39 @@ func main() {
 
 	crypto := security.NewCrypto(cfg.EncryptionKey)
 	store := db.NewStore(pool, crypto)
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+	adminExists, err := store.AdminExists(ctx, cfg.AdminUsername)
 	if err != nil {
-		log.Error("admin_password_hash_failed", map[string]interface{}{"error": err.Error()})
+		log.Error("admin_lookup_failed", map[string]interface{}{"error": err.Error()})
 		os.Exit(1)
 	}
-	if err := store.EnsureAdmin(ctx, cfg.AdminUsername, string(passwordHash)); err != nil {
-		log.Error("ensure_admin_failed", map[string]interface{}{"error": err.Error()})
-		os.Exit(1)
+	if !adminExists {
+		if cfg.AdminPassword == "" {
+			log.Error("admin_password_required", map[string]interface{}{"error": "ADMIN_PASSWORD is required when creating the initial admin user"})
+			os.Exit(1)
+		}
+		passwordHash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			log.Error("admin_password_hash_failed", map[string]interface{}{"error": err.Error()})
+			os.Exit(1)
+		}
+		created, err := store.EnsureAdmin(ctx, cfg.AdminUsername, string(passwordHash))
+		if err != nil {
+			log.Error("ensure_admin_failed", map[string]interface{}{"error": err.Error()})
+			os.Exit(1)
+		}
+		if created {
+			log.Info("admin_created", map[string]interface{}{"username": cfg.AdminUsername})
+		}
 	}
 
-	registry := provider.NewRegistry(
-		provider.NewExaProvider(provider.Config{UserAgent: cfg.UpstreamUserAgent, Timeout: cfg.RequestTimeout}),
-		provider.NewYouProvider(provider.Config{UserAgent: cfg.UpstreamUserAgent, Timeout: cfg.RequestTimeout}),
-		provider.NewJinaProvider(provider.Config{UserAgent: cfg.UpstreamUserAgent, Timeout: cfg.RequestTimeout}),
-	)
+	registry, err := buildProviderRegistry(cfg)
+	if err != nil {
+		log.Error("provider_registry_failed", map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
 	keyPool := keypool.NewManager(store)
 	orchestrator := search.NewOrchestrator(registry, keyPool, store)
-	auth := api.NewAuthService(store)
+	auth := api.NewAuthService(store, cfg.AdminSessionTTL, cfg.AdminLoginMaxAttempts, cfg.AdminLoginWindow, cfg.AdminLoginLockout)
 	handler := api.NewHandler(store, auth, orchestrator)
 
 	server := api.NewServer(cfg, log)
@@ -74,7 +94,10 @@ func main() {
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           server.Router(),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: cfg.ServerReadHeaderTimeout,
+		ReadTimeout:       cfg.ServerReadTimeout,
+		WriteTimeout:      cfg.ServerWriteTimeout,
+		IdleTimeout:       cfg.ServerIdleTimeout,
 	}
 
 	go func() {
@@ -94,6 +117,32 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Error("server_shutdown_failed", map[string]interface{}{"error": err.Error()})
 	}
+}
+
+func buildProviderRegistry(cfg config.Config) (*provider.Registry, error) {
+	registry := provider.NewRegistry()
+	registry.RegisterFactory(model.ProviderExa, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewExaProvider(providerCfg)
+	})
+	registry.RegisterFactory(model.ProviderYou, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewYouProvider(providerCfg)
+	})
+	registry.RegisterFactory(model.ProviderJina, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewJinaProvider(providerCfg)
+	})
+	return registry, nil
 }
 
 func startLogRetentionCleaner(store *db.Store, log *logging.Logger) func() {

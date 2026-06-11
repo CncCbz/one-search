@@ -1,13 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSessionStore } from '../stores/session'
-import LoginView from '../views/LoginView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import ProvidersView from '../views/ProvidersView.vue'
-import TokensView from '../views/TokensView.vue'
-import PlaygroundView from '../views/PlaygroundView.vue'
-import LogsView from '../views/LogsView.vue'
-import AuditLogsView from '../views/AuditLogsView.vue'
-import SettingsView from '../views/SettingsView.vue'
+const LoginView = () => import('../views/LoginView.vue')
+const DashboardView = () => import('../views/DashboardView.vue')
+const ProvidersView = () => import('../views/ProvidersView.vue')
+const TokensView = () => import('../views/TokensView.vue')
+const PlaygroundView = () => import('../views/PlaygroundView.vue')
+const LogsView = () => import('../views/LogsView.vue')
+const AuditLogsView = () => import('../views/AuditLogsView.vue')
+const SettingsView = () => import('../views/SettingsView.vue')
 
 const router = createRouter({
   history: createWebHistory(),

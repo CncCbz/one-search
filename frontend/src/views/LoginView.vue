@@ -16,14 +16,14 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { api } from '../api/client'
 import { useSessionStore } from '../stores/session'
 
 const router = useRouter()
 const session = useSessionStore()
 const loading = ref(false)
-const form = reactive({ username: 'admin', password: 'admin123456' })
+const form = reactive({ username: '', password: '' })
 
 async function login() {
   loading.value = true

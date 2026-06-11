@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -61,14 +62,15 @@ func (h *Handler) Mount(r chi.Router) {
 		r.With(h.auth.requireAPIToken).Post("/compat/tavily/search", h.tavilySearch)
 		r.With(h.auth.requireAPIToken).Post("/compat/serper/search", h.serperSearch)
 		r.With(h.auth.requireAPIToken).Post("/compat/openai/responses-search", h.openAISearch)
-		r.Get("/providers", h.providers)
-		r.Get("/usage/summary", h.usageSummary)
+		r.With(h.auth.requireAPIToken).Get("/providers", h.providers)
+		r.With(h.auth.requireAPIToken).Get("/usage/summary", h.usageSummary)
 	})
 
 	r.Route("/api/admin", func(r chi.Router) {
 		r.Post("/login", h.login)
 		r.Group(func(r chi.Router) {
 			r.Use(h.auth.requireAdmin)
+			r.Post("/logout", h.logout)
 			r.Get("/me", h.me)
 			r.Get("/dashboard", h.dashboard)
 			r.Get("/providers", h.adminProviders)
@@ -337,13 +339,29 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	token, err := h.auth.Login(r.Context(), req.Username, req.Password)
+	ip := clientIP(r)
+	token, expiresAt, err := h.auth.Login(r.Context(), req.Username, req.Password, ip)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid username or password")
+		reason := "invalid_credentials"
+		status := http.StatusUnauthorized
+		message := "invalid username or password"
+		if errors.Is(err, ErrLoginRateLimited) {
+			reason = "rate_limited"
+			status = http.StatusTooManyRequests
+			message = "too many login attempts"
+		}
+		h.audit(r, req.Username, "admin.login.failed", "session", "", map[string]interface{}{"username": req.Username, "reason": reason, "ip": ip})
+		writeError(w, status, message)
 		return
 	}
-	h.audit(r, req.Username, "admin.login", "session", "", nil)
-	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+	h.audit(r, req.Username, "admin.login", "session", "", map[string]interface{}{"ip": ip, "expires_at": expiresAt})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "expires_at": expiresAt})
+}
+
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	loggedOut := h.auth.Logout(bearerToken(r))
+	h.audit(r, "admin", "admin.logout", "session", "", map[string]interface{}{"logged_out": loggedOut, "ip": clientIP(r)})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {

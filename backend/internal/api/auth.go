@@ -2,13 +2,20 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/one-search/one-search/backend/internal/model"
 	"github.com/one-search/one-search/backend/internal/security"
 	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid username or password")
+	ErrLoginRateLimited   = errors.New("admin login rate limit exceeded")
 )
 
 type AuthStore interface {
@@ -19,10 +26,15 @@ type AuthStore interface {
 }
 
 type AuthService struct {
-	store       AuthStore
-	sessions    map[string]session
-	rateWindows map[int64]rateWindow
-	mu          sync.Mutex
+	store            AuthStore
+	sessions         map[string]session
+	rateWindows      map[int64]rateWindow
+	loginWindows     map[string]loginWindow
+	sessionTTL       time.Duration
+	loginMaxAttempts int
+	loginWindow      time.Duration
+	loginLockout     time.Duration
+	mu               sync.Mutex
 }
 
 type session struct {
@@ -35,26 +47,78 @@ type rateWindow struct {
 	Count     int
 }
 
-func NewAuthService(store AuthStore) *AuthService {
-	return &AuthService{store: store, sessions: map[string]session{}, rateWindows: map[int64]rateWindow{}}
+type loginWindow struct {
+	StartedAt   time.Time
+	Count       int
+	LockedUntil time.Time
 }
 
-func (a *AuthService) Login(ctx context.Context, username, password string) (string, error) {
+func NewAuthService(store AuthStore, sessionTTL time.Duration, loginMaxAttempts int, loginWindowDuration, loginLockout time.Duration) *AuthService {
+	if sessionTTL <= 0 {
+		sessionTTL = 24 * time.Hour
+	}
+	if loginMaxAttempts == 0 {
+		loginMaxAttempts = 5
+	}
+	if loginWindowDuration <= 0 {
+		loginWindowDuration = 5 * time.Minute
+	}
+	if loginLockout <= 0 {
+		loginLockout = 15 * time.Minute
+	}
+	return &AuthService{
+		store:            store,
+		sessions:         map[string]session{},
+		rateWindows:      map[int64]rateWindow{},
+		loginWindows:     map[string]loginWindow{},
+		sessionTTL:       sessionTTL,
+		loginMaxAttempts: loginMaxAttempts,
+		loginWindow:      loginWindowDuration,
+		loginLockout:     loginLockout,
+	}
+}
+
+func (a *AuthService) Login(ctx context.Context, username, password, clientIP string) (string, time.Time, error) {
+	attemptKey := loginAttemptKey(username, clientIP)
+	if a.loginLocked(attemptKey) {
+		return "", time.Time{}, ErrLoginRateLimited
+	}
 	user, err := a.store.GetAdminByUsername(ctx, username)
 	if err != nil {
-		return "", err
+		if a.recordLoginFailure(attemptKey) {
+			return "", time.Time{}, ErrLoginRateLimited
+		}
+		return "", time.Time{}, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", err
+		if a.recordLoginFailure(attemptKey) {
+			return "", time.Time{}, ErrLoginRateLimited
+		}
+		return "", time.Time{}, ErrInvalidCredentials
 	}
 	token, err := security.RandomToken("adm_")
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
+	}
+	expiresAt := time.Now().Add(a.sessionTTL)
+	a.mu.Lock()
+	delete(a.loginWindows, attemptKey)
+	a.sessions[token] = session{Username: username, ExpiresAt: expiresAt}
+	a.mu.Unlock()
+	return token, expiresAt, nil
+}
+
+func (a *AuthService) Logout(token string) bool {
+	if token == "" {
+		return false
 	}
 	a.mu.Lock()
-	a.sessions[token] = session{Username: username, ExpiresAt: time.Now().Add(24 * time.Hour)}
-	a.mu.Unlock()
-	return token, nil
+	defer a.mu.Unlock()
+	if _, ok := a.sessions[token]; !ok {
+		return false
+	}
+	delete(a.sessions, token)
+	return true
 }
 
 func (a *AuthService) requireAdmin(next http.Handler) http.Handler {
@@ -141,6 +205,48 @@ func (a *AuthService) validSession(token string) bool {
 		return false
 	}
 	return true
+}
+
+func (a *AuthService) loginLocked(key string) bool {
+	if a.loginMaxAttempts < 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	window := a.loginWindows[key]
+	if window.LockedUntil.After(now) {
+		return true
+	}
+	if !window.LockedUntil.IsZero() && !window.LockedUntil.After(now) {
+		delete(a.loginWindows, key)
+	}
+	return false
+}
+
+func (a *AuthService) recordLoginFailure(key string) bool {
+	if a.loginMaxAttempts < 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	window := a.loginWindows[key]
+	if window.StartedAt.IsZero() || now.Sub(window.StartedAt) > a.loginWindow {
+		window = loginWindow{StartedAt: now}
+	}
+	window.Count++
+	if window.Count >= a.loginMaxAttempts {
+		window.LockedUntil = now.Add(a.loginLockout)
+		a.loginWindows[key] = window
+		return true
+	}
+	a.loginWindows[key] = window
+	return false
+}
+
+func loginAttemptKey(username, clientIP string) string {
+	return strings.ToLower(strings.TrimSpace(username)) + "|" + strings.TrimSpace(clientIP)
 }
 
 func (a *AuthService) allowToken(token model.APIToken) bool {

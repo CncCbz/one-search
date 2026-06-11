@@ -80,7 +80,7 @@ export interface ProviderKey {
   provider_name: string
   alias: string
   key_hint: string
-  key: string
+  key?: string
   exa_api_key_id?: string
   exa_service_key_hint?: string
   status: string
@@ -134,7 +134,7 @@ export interface ApiToken {
   id: number
   name: string
   token_prefix: string
-  token: string
+  token?: string
   scopes: string[]
   allowed_providers: string[]
   status: string
@@ -221,7 +221,8 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 }
 
 export const api = {
-  login: (username: string, password: string) => apiFetch<{ token: string }>('/api/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  login: (username: string, password: string) => apiFetch<{ token: string; expires_at: string }>('/api/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  logout: () => apiFetch('/api/admin/logout', { method: 'POST' }),
   dashboard: () => apiFetch<{ usage: UsageSummary; providers: ProviderConfig[]; provider_health?: ProviderHealth[]; billing?: BillingSummary }>('/api/admin/dashboard'),
   providers: () => apiFetch<{ providers: ProviderConfig[] }>('/api/admin/providers'),
   updateProvider: (provider: ProviderConfig) => apiFetch('/api/admin/providers/' + provider.name, { method: 'PATCH', body: JSON.stringify(provider) }),

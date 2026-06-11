@@ -24,7 +24,7 @@ type APIToken struct {
 	Name             string     `json:"name"`
 	TokenHash        string     `json:"-"`
 	TokenCiphertext  string     `json:"-"`
-	Token            string     `json:"token"`
+	Token            string     `json:"token,omitempty"`
 	TokenPrefix      string     `json:"token_prefix"`
 	Scopes           []string   `json:"scopes"`
 	AllowedProviders []string   `json:"allowed_providers"`
@@ -44,7 +44,7 @@ type ProviderKeyView struct {
 	ProviderName               string     `json:"provider_name"`
 	Alias                      string     `json:"alias"`
 	KeyHint                    string     `json:"key_hint"`
-	Key                        string     `json:"key"`
+	Key                        string     `json:"key,omitempty"`
 	ExaAPIKeyID                string     `json:"exa_api_key_id,omitempty"`
 	ExaServiceKeyHint          string     `json:"exa_service_key_hint,omitempty"`
 	Status                     string     `json:"status"`

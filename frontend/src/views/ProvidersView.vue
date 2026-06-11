@@ -89,17 +89,7 @@
                 </template>
                 <template v-else>
                   <div class="key-main">
-                    <el-input class="key-input" :model-value="visibleKeyIds.has(row.id) ? row.key : maskKey(row.key)"
-                      readonly>
-                      <template #suffix>
-                        <div class="key-icon-actions">
-                          <el-tooltip :content="visibleKeyIds.has(row.id) ? '隐藏密钥' : '显示密钥'" placement="top">
-                            <el-button link :icon="visibleKeyIds.has(row.id) ? Hide : View" aria-label="显示或隐藏密钥"
-                              @click="toggleKeyVisible(row.id)" />
-                          </el-tooltip>
-                        </div>
-                      </template>
-                    </el-input>
+                    <el-input class="key-input" :model-value="row.key_hint || '已保存密钥'" readonly />
                     <div class="key-meta">
                       <span>成功 {{ row.total_successes }}</span>
                       <span>失败 {{ row.total_failures }}</span>
@@ -234,8 +224,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Check, CircleCheck, Clock, Close, CopyDocument, Delete, Hide, Plus, Refresh, Remove, View, WarnTriangleFilled } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import { ElNotification } from 'element-plus/es/components/notification/index'
+import { Check, CircleCheck, Clock, Close, CopyDocument, Delete, Plus, Refresh, Remove, WarnTriangleFilled } from '@element-plus/icons-vue'
 import { api, OfficialQuotaResult, ProviderConfig, ProviderKey } from '../api/client'
 
 type EditableKey = ProviderKey & { isNew?: boolean }
@@ -252,7 +244,6 @@ const draftKey = ref('')
 const draftExaServiceKey = ref('')
 const testingKeyId = ref<number | null>(null)
 const quotaLoadingKeyId = ref<number | null>(null)
-const visibleKeyIds = ref(new Set<number>())
 const advancedOpen = ref<string[]>([])
 
 const providerCards = computed<ProviderCard[]>(() => providers.value.map((provider) => {
@@ -262,7 +253,7 @@ const providerCards = computed<ProviderCard[]>(() => providers.value.map((provid
   return { ...provider, keyCount: ownedKeys.length, enabledKeyCount: ownedKeys.filter((item) => item.status === 'enabled').length, totalSuccess, totalFailure, totalCalls: totalSuccess + totalFailure }
 }))
 const selectedKeys = computed(() => providerForm.value ? keys.value.filter((item) => item.provider_name === providerForm.value?.name) : [])
-const tableKeys = computed<EditableKey[]>(() => creatingRow.value ? [{ id: 0, provider_id: 0, provider_name: providerForm.value?.name || '', alias: '', key_hint: '', key: '', exa_service_key_hint: '', status: 'enabled', weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0, max_concurrency: 1, current_failures: 0, total_successes: 0, total_failures: 0, daily_used: 0, monthly_used: 0, official_quota_status: '', official_quota_message: '', official_quota_unit: '', created_at: '', updated_at: '', isNew: true }, ...selectedKeys.value] : selectedKeys.value)
+const tableKeys = computed<EditableKey[]>(() => creatingRow.value ? [{ id: 0, provider_id: 0, provider_name: providerForm.value?.name || '', alias: '', key_hint: '', exa_service_key_hint: '', status: 'enabled', weight: 1, rpm_limit: 0, daily_quota: 0, monthly_quota: 0, max_concurrency: 1, current_failures: 0, total_successes: 0, total_failures: 0, daily_used: 0, monthly_used: 0, official_quota_status: '', official_quota_message: '', official_quota_unit: '', created_at: '', updated_at: '', isNew: true }, ...selectedKeys.value] : selectedKeys.value)
 const dialogTitle = computed(() => providerForm.value ? `编辑 ${providerForm.value.display_name}` : '编辑平台')
 const providerRequestLimit = computed({
   get() {
@@ -323,12 +314,6 @@ function formatCurrency(value?: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(value)
 }
 
-function maskKey(key: string) {
-  if (!key) return '-'
-  if (key.length <= 16) return key
-  return `${key.slice(0, 8)}...${key.slice(-8)}`
-}
-
 function successRate(row: EditableKey) {
   const total = row.total_successes + row.total_failures
   return total > 0 ? Math.round((row.total_successes / total) * 100) : 0
@@ -367,13 +352,6 @@ function formatTime(value: string) {
   return date.toLocaleString()
 }
 
-function toggleKeyVisible(id: number) {
-  const next = new Set(visibleKeyIds.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  visibleKeyIds.value = next
-}
-
 async function copyText(text: string) {
   if (!text) return
   await navigator.clipboard.writeText(text)
@@ -393,7 +371,6 @@ function openProvider(provider: ProviderConfig) {
   creatingRow.value = false
   draftKey.value = ''
   draftExaServiceKey.value = ''
-  visibleKeyIds.value = new Set()
   advancedOpen.value = []
   dialogVisible.value = true
 }

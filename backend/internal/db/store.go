@@ -23,13 +23,24 @@ func NewStore(pool *pgxpool.Pool, crypto *security.Crypto) *Store {
 	return &Store{pool: pool, crypto: crypto}
 }
 
-func (s *Store) EnsureAdmin(ctx context.Context, username, passwordHash string) error {
-	_, err := s.pool.Exec(ctx, `
+func (s *Store) AdminExists(ctx context.Context, username string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM admin_users WHERE username=$1)`, username).Scan(&exists)
+	return exists, err
+}
+
+func (s *Store) EnsureAdmin(ctx context.Context, username, passwordHash string) (bool, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `
 		INSERT INTO admin_users (username, password_hash)
 		VALUES ($1, $2)
-		ON CONFLICT (username) DO UPDATE SET password_hash=EXCLUDED.password_hash, updated_at=now()
-	`, username, passwordHash)
-	return err
+		ON CONFLICT (username) DO NOTHING
+		RETURNING id
+	`, username, passwordHash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *Store) GetAdminByUsername(ctx context.Context, username string) (model.AdminUser, error) {
@@ -277,7 +288,7 @@ func (s *Store) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, erro
 
 func (s *Store) ListProviderKeys(ctx context.Context) ([]model.ProviderKeyView, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint, COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_hint, ''),
+		SELECT k.id, k.provider_id, p.name, k.alias, k.key_hint, COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_hint, ''),
 		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency, k.current_failures, k.total_successes,
 		       k.total_failures,
 		       COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.provider_key_id=k.id AND u.usage_date=CURRENT_DATE), 0) AS daily_used,
@@ -300,17 +311,11 @@ func (s *Store) ListProviderKeys(ctx context.Context) ([]model.ProviderKeyView, 
 	keys := []model.ProviderKeyView{}
 	for rows.Next() {
 		var item model.ProviderKeyView
-		var ciphertext string
 		var balance, balanceUSD, usedUSD, totalQuantity float64
 		var hasBalance, hasBalanceUSD, hasUsedUSD, hasTotalQuantity bool
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CurrentFailures, &item.TotalSuccesses, &item.TotalFailures, &item.DailyUsed, &item.MonthlyUsed, &item.OfficialQuotaStatus, &item.OfficialQuotaMessage, &item.OfficialQuotaUnit, &balance, &hasBalance, &balanceUSD, &hasBalanceUSD, &usedUSD, &hasUsedUSD, &totalQuantity, &hasTotalQuantity, &item.OfficialQuotaAccountID, &item.OfficialQuotaCheckedAt, &item.CooldownUntil, &item.LastUsedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &item.KeyHint, &item.ExaAPIKeyID, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.CurrentFailures, &item.TotalSuccesses, &item.TotalFailures, &item.DailyUsed, &item.MonthlyUsed, &item.OfficialQuotaStatus, &item.OfficialQuotaMessage, &item.OfficialQuotaUnit, &balance, &hasBalance, &balanceUSD, &hasBalanceUSD, &usedUSD, &hasUsedUSD, &totalQuantity, &hasTotalQuantity, &item.OfficialQuotaAccountID, &item.OfficialQuotaCheckedAt, &item.CooldownUntil, &item.LastUsedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
-		plain, err := s.crypto.Decrypt(ciphertext)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt provider key %s: %w", item.Alias, err)
-		}
-		item.Key = plain
 		if hasBalance {
 			item.OfficialQuotaBalance = float64Ptr(balance)
 		}
@@ -522,7 +527,7 @@ func (s *Store) FindAPIToken(ctx context.Context, token string) (model.APIToken,
 
 func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
+		SELECT id, name, token_hash, token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
 		FROM api_tokens ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -532,16 +537,11 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
 	items := []model.APIToken{}
 	for rows.Next() {
 		var item model.APIToken
-		if err := rows.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
-		if item.TokenCiphertext != "" {
-			plain, err := s.crypto.Decrypt(item.TokenCiphertext)
-			if err != nil {
-				return nil, fmt.Errorf("decrypt api token %s: %w", item.Name, err)
-			}
-			item.Token = plain
-		}
+		item.TokenCiphertext = ""
+		item.Token = ""
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -564,13 +564,12 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, scopes []string
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO api_tokens (name, token_hash, token_ciphertext, token_prefix, scopes, allowed_providers, rate_limit_per_min, daily_quota, monthly_quota)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, name, token_hash, COALESCE(token_ciphertext, ''), token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
+		RETURNING id, name, token_hash, token_prefix, scopes, allowed_providers, status, rate_limit_per_min, daily_quota, monthly_quota, last_used_at, usage_count, created_at, updated_at
 	`, name, hash, tokenCiphertext, prefix, scopes, allowedProviders, rateLimit, dailyQuota, monthlyQuota)
 	var item model.APIToken
-	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenCiphertext, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.TokenHash, &item.TokenPrefix, &item.Scopes, &item.AllowedProviders, &item.Status, &item.RateLimitPerMin, &item.DailyQuota, &item.MonthlyQuota, &item.LastUsedAt, &item.UsageCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return model.APIToken{}, "", err
 	}
-	item.Token = rawToken
 	return item, rawToken, nil
 }
 

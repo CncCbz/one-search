@@ -87,7 +87,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { api, ProviderCallLog } from '../api/client'
 
