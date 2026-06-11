@@ -80,6 +80,9 @@ func main() {
 	orchestrator := search.NewOrchestrator(registry, keyPool, store)
 	auth := api.NewAuthService(store, cfg.AdminSessionTTL, cfg.AdminLoginMaxAttempts, cfg.AdminLoginWindow, cfg.AdminLoginLockout)
 	handler := api.NewHandler(store, auth, orchestrator)
+	if cfg.MCPEnabled {
+		handler.EnableMCP(cfg.MCPPath)
+	}
 
 	server := api.NewServer(cfg, log)
 	server.SetHealth(func() bool {
@@ -101,7 +104,7 @@ func main() {
 	}
 
 	go func() {
-		log.Info("server_starting", map[string]interface{}{"addr": cfg.HTTPAddr})
+		log.Info("server_starting", map[string]interface{}{"addr": cfg.HTTPAddr, "mcp_enabled": cfg.MCPEnabled, "mcp_path": cfg.MCPPath})
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server_failed", map[string]interface{}{"error": err.Error()})
 			os.Exit(1)
@@ -141,6 +144,34 @@ func buildProviderRegistry(cfg config.Config) (*provider.Registry, error) {
 			providerCfg.Timeout = cfg.RequestTimeout
 		}
 		return provider.NewJinaProvider(providerCfg)
+	})
+	registry.RegisterFactory(model.ProviderTavily, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewTavilyProvider(providerCfg)
+	})
+	registry.RegisterFactory(model.ProviderFirecrawl, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewFirecrawlProvider(providerCfg)
+	})
+	registry.RegisterFactory(model.ProviderSerper, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewSerperProvider(providerCfg)
+	})
+	registry.RegisterFactory(model.ProviderBrave, func(providerCfg provider.Config) provider.Provider {
+		providerCfg.UserAgent = cfg.UpstreamUserAgent
+		if providerCfg.Timeout == 0 {
+			providerCfg.Timeout = cfg.RequestTimeout
+		}
+		return provider.NewBraveProvider(providerCfg)
 	})
 	return registry, nil
 }

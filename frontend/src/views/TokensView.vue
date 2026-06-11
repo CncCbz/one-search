@@ -74,12 +74,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { api, ApiToken } from '../api/client'
-
-const providerOptions = [
-  { label: 'Exa', value: 'exa' },
-  { label: 'You.com', value: 'you' },
-  { label: 'Jina', value: 'jina' }
-]
+import { providerLabel, providerOptions } from '../utils/providers'
 const tokens = ref<ApiToken[]>([])
 const dialog = ref(false)
 const rawToken = ref('')
@@ -88,10 +83,6 @@ const form = reactive({ name: '默认客户端', scopes: ['search'], allowed_pro
 
 async function load() {
   tokens.value = (await api.tokens()).tokens
-}
-
-function providerLabel(provider: string) {
-  return providerOptions.find((item) => item.value === provider)?.label || provider
 }
 
 function displayToken(token: ApiToken) {

@@ -5,7 +5,7 @@
         <el-form-item label="搜索词"><el-input v-model="form.query" /></el-form-item>
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="搜索模式"><el-select v-model="form.mode"><el-option value="parallel" label="并发聚合" /><el-option value="fallback" label="失败转移" /><el-option value="single" label="单平台" /></el-select></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="搜索平台"><el-select v-model="form.providers" multiple><el-option value="exa" label="Exa" /><el-option value="you" label="You.com" /><el-option value="jina" label="Jina" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="搜索平台"><el-select v-model="form.providers" multiple><el-option v-for="item in providerOptions" :key="item.value" :value="item.value" :label="item.label" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="汇总返回结果数"><el-input-number v-model="form.limit" :min="1" :max="50" controls-position="right" /></el-form-item></el-col>
         </el-row>
         <div class="search-action-bar">
@@ -90,6 +90,7 @@ import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { api, ProviderCallLog } from '../api/client'
+import { defaultProviders, providerLabel, providerOptions } from '../utils/providers'
 
 type SearchResultItem = {
   title?: string
@@ -139,7 +140,7 @@ type SearchResponse = {
 const loading = ref(false)
 const result = ref<SearchResponse | null>(null)
 const openResultKeys = ref<string[]>([])
-const form = reactive({ query: 'latest web search APIs', mode: 'parallel', providers: ['exa', 'you', 'jina'], limit: 10, cache: 'default' })
+const form = reactive({ query: 'latest web search APIs', mode: 'parallel', providers: [...defaultProviders], limit: 10, cache: 'default' })
 
 const providerRows = computed<ProviderRow[]>(() => {
   if (!result.value) return []
@@ -204,10 +205,6 @@ const providerRows = computed<ProviderRow[]>(() => {
   return rows
 })
 const hasProviderResults = computed(() => providerRows.value.some((row) => row.results.length > 0))
-
-function providerLabel(provider: string) {
-  return ({ exa: 'Exa', you: 'You.com', jina: 'Jina' } as Record<string, string>)[provider] || provider
-}
 
 function resultProviderLabel(item: SearchResultItem, fallback = '未知渠道') {
   if (item.providers?.length) return item.providers.map(providerLabel).join(', ')

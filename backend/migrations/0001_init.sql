@@ -179,10 +179,14 @@ INSERT INTO providers (name, display_name, base_url, priority, weight, timeout_m
 VALUES
     ('exa', 'Exa', 'https://api.exa.ai', 10, 1, 12000, FALSE, 86400, '{"type":"neural","key_retry_count":3}'::jsonb),
     ('you', 'You.com', 'https://ydc-index.io', 20, 1, 10000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
-    ('jina', 'Jina', 'https://s.jina.ai', 30, 1, 15000, FALSE, 21600, '{"key_retry_count":3}'::jsonb)
+    ('jina', 'Jina', 'https://s.jina.ai', 30, 1, 15000, FALSE, 21600, '{"key_retry_count":3}'::jsonb),
+    ('tavily', 'Tavily', 'https://api.tavily.com', 40, 1, 15000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
+    ('firecrawl', 'Firecrawl', 'https://api.firecrawl.dev', 50, 1, 30000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
+    ('serper', 'Serper', 'https://google.serper.dev', 60, 1, 15000, FALSE, 3600, '{"key_retry_count":3}'::jsonb),
+    ('brave', 'Brave Search', 'https://api.search.brave.com/res/v1', 70, 1, 15000, FALSE, 3600, '{"key_retry_count":3}'::jsonb)
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO settings (key, value)
 VALUES
-    ('runtime', '{"default_mode":"parallel","default_providers":["exa","you","jina"],"default_limit":10,"default_dedupe":true,"request_timeout_ms":20000,"cache_enabled":false,"cache_ttl_seconds":3600,"cache_max_results":20,"compat_tavily_enabled":true,"compat_serper_enabled":true,"compat_openai_enabled":true,"api_auth_required":true,"provider_health_window_minutes":15,"provider_routing_strategy":"fixed","log_retention_days":3}'::jsonb)
+    ('runtime', '{"default_mode":"parallel","default_providers":["exa","you","jina","tavily","firecrawl","serper","brave"],"default_limit":10,"default_dedupe":true,"request_timeout_ms":20000,"cache_enabled":false,"cache_ttl_seconds":3600,"cache_max_results":20,"compat_tavily_enabled":true,"compat_serper_enabled":true,"compat_openai_enabled":true,"api_auth_required":true,"provider_health_window_minutes":15,"provider_routing_strategy":"fixed","log_retention_days":3}'::jsonb)
 ON CONFLICT (key) DO NOTHING;

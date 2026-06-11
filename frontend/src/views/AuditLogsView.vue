@@ -1,10 +1,10 @@
 <template>
-  <div>
+  <div class="audit-page">
     <div class="page-actions">
       <el-button @click="load">刷新</el-button>
     </div>
-    <el-card class="soft-card" shadow="never">
-      <el-table :data="logs" stripe>
+    <el-card class="soft-card audit-card" shadow="never">
+      <el-table :data="logs" stripe height="100%">
         <el-table-column label="时间" width="180">
           <template #default="scope">{{ formatTime(scope.row.created_at) }}</template>
         </el-table-column>
@@ -50,6 +50,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+.audit-page { height: calc(100vh - 56px); display: flex; flex-direction: column; overflow: hidden; }
+.audit-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.audit-card :deep(.el-card__body) { flex: 1; min-height: 0; overflow: hidden; }
 .muted-id { margin-left: 6px; color: var(--muted); }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: normal; word-break: break-all; }
 </style>

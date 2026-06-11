@@ -178,6 +178,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { api, ProviderCallLog, SearchLog } from '../api/client'
+import { providerLabel } from '../utils/providers'
 
 type SearchResultItem = {
   title?: string
@@ -317,10 +318,6 @@ const requestParams = computed(() => {
 
 function modeLabel(mode: string) {
   return ({ parallel: '并发', fallback: '转移', single: '单平台' } as Record<string, string>)[mode] || mode
-}
-
-function providerLabel(provider: string) {
-  return ({ exa: 'Exa', you: 'You.com', jina: 'Jina' } as Record<string, string>)[provider] || provider
 }
 
 function resultProviderLabel(item: SearchResultItem, fallback = '未知渠道') {

@@ -114,7 +114,7 @@ func (s *Store) FindAdminAPIKey(ctx context.Context, token string) (model.AdminA
 func (s *Store) RuntimeSettings(ctx context.Context) (model.RuntimeSettings, error) {
 	settings := model.RuntimeSettings{
 		DefaultMode:                 model.SearchModeParallel,
-		DefaultProviders:            []string{model.ProviderExa, model.ProviderYou, model.ProviderJina},
+		DefaultProviders:            append([]string(nil), model.DefaultProviders...),
 		DefaultLimit:                10,
 		DefaultDedupe:               true,
 		RequestTimeoutMS:            20000,
@@ -218,7 +218,10 @@ func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName stri
 	rows, err := s.pool.Query(ctx, `
 		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint,
 		       COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_ciphertext, ''), COALESCE(k.exa_service_key_hint, ''),
-		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency,
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota,
+		       COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.provider_key_id=k.id AND u.usage_date >= date_trunc('month', CURRENT_DATE)::date),0) AS monthly_used,
+		       COALESCE((SELECT SUM(m.quantity_total) FROM usage_meter_daily m WHERE m.provider_key_id=k.id AND m.provider_name=p.name AND m.unit='credits' AND m.usage_date >= date_trunc('month', CURRENT_DATE)::date),0)::float8 AS monthly_credits,
+		       k.max_concurrency,
 		       k.total_successes, k.total_failures, COALESCE(k.last_used_at, '0001-01-01'::timestamptz), COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
@@ -236,7 +239,7 @@ func (s *Store) ListAvailableProviderKeys(ctx context.Context, providerName stri
 	for rows.Next() {
 		var item model.APIKey
 		var ciphertext, exaServiceKeyCiphertext string
-		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.TotalSuccesses, &item.TotalFailures, &item.LastUsedAt, &item.CooldownUntil); err != nil {
+		if err := rows.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MonthlyUsed, &item.MonthlyCredits, &item.MaxConcurrency, &item.TotalSuccesses, &item.TotalFailures, &item.LastUsedAt, &item.CooldownUntil); err != nil {
 			return nil, err
 		}
 		plain, err := s.crypto.Decrypt(ciphertext)
@@ -260,7 +263,10 @@ func (s *Store) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, erro
 	row := s.pool.QueryRow(ctx, `
 		SELECT k.id, k.provider_id, p.name, k.alias, k.key_ciphertext, k.key_hint,
 		       COALESCE(k.exa_api_key_id, ''), COALESCE(k.exa_service_key_ciphertext, ''), COALESCE(k.exa_service_key_hint, ''),
-		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota, k.max_concurrency,
+		       k.status, k.weight, k.rpm_limit, k.daily_quota, k.monthly_quota,
+		       COALESCE((SELECT SUM(u.requests_total) FROM usage_daily u WHERE u.provider_key_id=k.id AND u.usage_date >= date_trunc('month', CURRENT_DATE)::date),0) AS monthly_used,
+		       COALESCE((SELECT SUM(m.quantity_total) FROM usage_meter_daily m WHERE m.provider_key_id=k.id AND m.provider_name=p.name AND m.unit='credits' AND m.usage_date >= date_trunc('month', CURRENT_DATE)::date),0)::float8 AS monthly_credits,
+		       k.max_concurrency,
 		       k.total_successes, k.total_failures, COALESCE(k.last_used_at, '0001-01-01'::timestamptz), COALESCE(k.cooldown_until, '0001-01-01'::timestamptz)
 		FROM provider_keys k
 		JOIN providers p ON p.id = k.provider_id
@@ -268,7 +274,7 @@ func (s *Store) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, erro
 	`, id)
 	var item model.APIKey
 	var ciphertext, exaServiceKeyCiphertext string
-	if err := row.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MaxConcurrency, &item.TotalSuccesses, &item.TotalFailures, &item.LastUsedAt, &item.CooldownUntil); err != nil {
+	if err := row.Scan(&item.ID, &item.ProviderID, &item.ProviderName, &item.Alias, &ciphertext, &item.KeyHint, &item.ExaAPIKeyID, &exaServiceKeyCiphertext, &item.ExaServiceKeyHint, &item.Status, &item.Weight, &item.RPMLimit, &item.DailyQuota, &item.MonthlyQuota, &item.MonthlyUsed, &item.MonthlyCredits, &item.MaxConcurrency, &item.TotalSuccesses, &item.TotalFailures, &item.LastUsedAt, &item.CooldownUntil); err != nil {
 		return model.APIKey{}, err
 	}
 	plain, err := s.crypto.Decrypt(ciphertext)
@@ -456,7 +462,7 @@ func (s *Store) UpdateProviderKeyOfficialQuota(ctx context.Context, id int64, qu
 	if message == "" && quota.Status == "error" {
 		message = "official quota query failed"
 	}
-	exhausted := quota.Status == "success" && (quota.Provider == model.ProviderJina || quota.Provider == model.ProviderYou) && quota.Balance != nil && *quota.Balance <= 0
+	exhausted := quota.Status == "success" && officialQuotaCanExhaustKey(quota.Provider) && quota.Balance != nil && *quota.Balance <= 0
 	_, err := s.pool.Exec(ctx, `
 		UPDATE provider_keys
 		SET official_quota_status=$2,
@@ -473,6 +479,15 @@ func (s *Store) UpdateProviderKeyOfficialQuota(ctx context.Context, id int64, qu
 		WHERE id=$1
 	`, id, quota.Status, message, quota.Unit, floatPtrValue(quota.Balance), floatPtrValue(quota.BalanceUSD), floatPtrValue(quota.TotalCostUSD), floatPtrValue(quota.TotalQuantity), quota.AccountID, quota.FetchedAt, exhausted)
 	return err
+}
+
+func officialQuotaCanExhaustKey(providerName string) bool {
+	switch providerName {
+	case model.ProviderYou, model.ProviderJina, model.ProviderTavily, model.ProviderFirecrawl, model.ProviderBrave:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Store) RecordKeyResult(ctx context.Context, key model.APIKey, success bool, errorType string) error {

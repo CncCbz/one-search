@@ -50,13 +50,33 @@ type Handler struct {
 	store        AppStore
 	auth         *AuthService
 	orchestrator *search.Orchestrator
+	mcpEnabled   bool
+	mcpPath      string
 }
 
 func NewHandler(store AppStore, auth *AuthService, orchestrator *search.Orchestrator) *Handler {
 	return &Handler{store: store, auth: auth, orchestrator: orchestrator}
 }
 
+func (h *Handler) EnableMCP(path string) {
+	h.mcpEnabled = true
+	h.mcpPath = strings.TrimSpace(path)
+	if h.mcpPath == "" {
+		h.mcpPath = "/mcp"
+	}
+	if !strings.HasPrefix(h.mcpPath, "/") {
+		h.mcpPath = "/" + h.mcpPath
+	}
+}
+
 func (h *Handler) Mount(r chi.Router) {
+	if h.mcpEnabled {
+		h.mountMCP(r, h.mcpPath)
+		if h.mcpPath != "/v1/mcp" {
+			h.mountMCP(r, "/v1/mcp")
+		}
+	}
+
 	r.Route("/v1", func(r chi.Router) {
 		r.With(h.auth.requireAPIToken).Post("/search", h.search)
 		r.With(h.auth.requireAPIToken).Post("/compat/tavily/search", h.tavilySearch)

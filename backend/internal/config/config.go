@@ -20,6 +20,8 @@ type Config struct {
 	AdminPassword           string
 	EncryptionKey           string
 	APIAuthRequired         bool
+	MCPEnabled              bool
+	MCPPath                 string
 	CorsOrigins             []string
 	UpstreamUserAgent       string
 	RequestTimeout          time.Duration
@@ -54,6 +56,8 @@ func Load() (Config, error) {
 		AdminPassword:           getString("ADMIN_PASSWORD", adminPasswordFallback),
 		EncryptionKey:           getString("ENCRYPTION_KEY", encryptionKeyFallback),
 		APIAuthRequired:         getBool("API_AUTH_REQUIRED", true),
+		MCPEnabled:              getBool("MCP_ENABLED", false),
+		MCPPath:                 normalizePath(getString("MCP_PATH", "/mcp")),
 		CorsOrigins:             getCSV("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8080"),
 		UpstreamUserAgent:       getString("UPSTREAM_USER_AGENT", "OneSearchRelay/0.1"),
 		RequestTimeout:          time.Duration(getInt("REQUEST_TIMEOUT_MS", 20000)) * time.Millisecond,
@@ -130,6 +134,17 @@ func getString(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func normalizePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "/mcp"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
 }
 
 func getBool(key string, fallback bool) bool {

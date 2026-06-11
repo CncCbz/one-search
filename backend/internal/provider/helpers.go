@@ -150,6 +150,25 @@ func firstStringFromArray(item map[string]interface{}, keys ...string) string {
 	return ""
 }
 
+func stringArrayValue(item map[string]interface{}, keys ...string) []string {
+	for _, key := range keys {
+		values, ok := item[key].([]interface{})
+		if !ok || len(values) == 0 {
+			continue
+		}
+		items := make([]string, 0, len(values))
+		for _, value := range values {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+				items = append(items, text)
+			}
+		}
+		if len(items) > 0 {
+			return items
+		}
+	}
+	return nil
+}
+
 func resultArray(payload map[string]interface{}, keys ...string) []interface{} {
 	for _, key := range keys {
 		if values, ok := payload[key].([]interface{}); ok {
@@ -190,6 +209,9 @@ func usageMeasurements(providerName string, payload map[string]interface{}) []mo
 	}
 	metadata := map[string]interface{}{"provider": providerName}
 	measurements := []model.UsageMeasurement{}
+	if credits := usageNumber(payload, "credits", "creditsUsed", "usage.credits", "usage.total_credits"); credits > 0 {
+		measurements = append(measurements, model.UsageMeasurement{Unit: "credits", Quantity: credits, Metadata: metadata})
+	}
 	if tokens := usageNumber(payload, "total_tokens", "tokens", "token_count", "usage.total_tokens", "usage.tokens"); tokens > 0 {
 		measurements = append(measurements, model.UsageMeasurement{Unit: "tokens", Quantity: tokens, Metadata: metadata})
 	}
@@ -254,4 +276,76 @@ func truncate(value string, max int) string {
 		return value
 	}
 	return value[:max]
+}
+
+func requestLimit(limit, fallback, max int) int {
+	if limit <= 0 {
+		limit = fallback
+	}
+	if max > 0 && limit > max {
+		return max
+	}
+	return limit
+}
+
+func optionString(options map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		value, ok := options[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			return strings.TrimSpace(typed)
+		case float64:
+			return jsonNumber(typed)
+		case int:
+			return strconv.Itoa(typed)
+		}
+	}
+	return ""
+}
+
+func optionInt(options map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		value, ok := options[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case int:
+			return typed
+		case float64:
+			return int(typed)
+		case string:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func optionStringSlice(options map[string]interface{}, keys ...string) []string {
+	for _, key := range keys {
+		value, ok := options[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case []string:
+			return typed
+		case []interface{}:
+			items := make([]string, 0, len(typed))
+			for _, item := range typed {
+				if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+					items = append(items, strings.TrimSpace(text))
+				}
+			}
+			if len(items) > 0 {
+				return items
+			}
+		}
+	}
+	return nil
 }

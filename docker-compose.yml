@@ -14,6 +14,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set a strong encryption key of at least 32 characters}
       API_AUTH_REQUIRED: ${API_AUTH_REQUIRED:-true}
+      MCP_ENABLED: ${MCP_ENABLED:-false}
+      MCP_PATH: ${MCP_PATH:-/mcp}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:8080}
     volumes:
       - postgres_data:/var/lib/postgresql/data

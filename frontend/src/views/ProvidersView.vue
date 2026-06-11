@@ -301,6 +301,10 @@ function providerShortName(name: string) {
   if (/you/i.test(name)) return 'Y'
   if (/jina/i.test(name)) return 'J'
   if (/exa/i.test(name)) return 'E'
+  if (/tavily/i.test(name)) return 'T'
+  if (/firecrawl/i.test(name)) return 'F'
+  if (/serper/i.test(name)) return 'S'
+  if (/brave/i.test(name)) return 'B'
   return (name || 'S').slice(0, 1).toUpperCase()
 }
 
@@ -325,6 +329,8 @@ function quotaMetaText(row: EditableKey) {
   if (row.provider_name === 'you') return `额度 ${formatCurrency(row.official_quota_balance_usd)}`
   if (row.provider_name === 'jina') return `额度 ${formatNumber(row.official_quota_balance)} tokens`
   if (row.provider_name === 'exa') return `用量 ${formatCurrency(row.official_quota_used_usd)}`
+  if (row.provider_name === 'tavily' || row.provider_name === 'firecrawl' || row.provider_name === 'serper') return `额度 ${formatNumber(row.official_quota_balance)} credits`
+  if (row.provider_name === 'brave') return `额度 ${formatNumber(row.official_quota_balance)} requests`
   return `额度 ${formatNumber(row.official_quota_balance)}`
 }
 
@@ -335,7 +341,7 @@ function quotaMetaClass(row: EditableKey) {
 
 function quotaValue(row: EditableKey) {
   if (row.provider_name === 'you') return row.official_quota_balance_usd ?? row.official_quota_balance ?? 0
-  if (row.provider_name === 'jina') return row.official_quota_balance ?? 0
+  if (row.provider_name === 'jina' || row.provider_name === 'tavily' || row.provider_name === 'firecrawl' || row.provider_name === 'serper' || row.provider_name === 'brave') return row.official_quota_balance ?? 0
   return row.official_quota_balance ?? 0
 }
 

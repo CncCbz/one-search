@@ -3,10 +3,16 @@ package model
 import "time"
 
 const (
-	ProviderExa  = "exa"
-	ProviderYou  = "you"
-	ProviderJina = "jina"
+	ProviderExa       = "exa"
+	ProviderYou       = "you"
+	ProviderJina      = "jina"
+	ProviderTavily    = "tavily"
+	ProviderFirecrawl = "firecrawl"
+	ProviderSerper    = "serper"
+	ProviderBrave     = "brave"
 )
+
+var DefaultProviders = []string{ProviderExa, ProviderYou, ProviderJina, ProviderTavily, ProviderFirecrawl, ProviderSerper, ProviderBrave}
 
 type SearchMode string
 
@@ -126,6 +132,8 @@ type APIKey struct {
 	RPMLimit          int       `json:"rpm_limit"`
 	DailyQuota        int       `json:"daily_quota"`
 	MonthlyQuota      int       `json:"monthly_quota"`
+	MonthlyUsed       int64     `json:"monthly_used,omitempty"`
+	MonthlyCredits    float64   `json:"monthly_credits,omitempty"`
 	MaxConcurrency    int       `json:"max_concurrency"`
 	TotalSuccesses    int64     `json:"total_successes"`
 	TotalFailures     int64     `json:"total_failures"`

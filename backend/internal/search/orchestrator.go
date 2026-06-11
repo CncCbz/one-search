@@ -318,7 +318,7 @@ func shouldRetryWithNextKey(err error, allowed map[string]bool) bool {
 }
 
 func (o *Orchestrator) refreshOfficialQuota(key model.APIKey) {
-	if key.ID == 0 {
+	if key.ID == 0 || !autoRefreshOfficialQuota(key.ProviderName) {
 		return
 	}
 	now := time.Now()
@@ -351,11 +351,20 @@ func (o *Orchestrator) refreshOfficialQuota(key model.APIKey) {
 	}()
 }
 
+func autoRefreshOfficialQuota(providerName string) bool {
+	switch providerName {
+	case model.ProviderSerper, model.ProviderBrave:
+		return false
+	default:
+		return true
+	}
+}
+
 func quotaRefreshInterval(providerName string) time.Duration {
 	switch providerName {
 	case model.ProviderExa:
 		return 5 * time.Minute
-	case model.ProviderYou, model.ProviderJina:
+	case model.ProviderYou, model.ProviderJina, model.ProviderTavily, model.ProviderFirecrawl, model.ProviderSerper, model.ProviderBrave:
 		return time.Minute
 	default:
 		return 5 * time.Minute
@@ -374,7 +383,7 @@ func applyDefaults(req model.SearchRequest, settings model.RuntimeSettings) mode
 		req.Providers = settings.DefaultProviders
 	}
 	if len(req.Providers) == 0 {
-		req.Providers = []string{model.ProviderExa, model.ProviderYou, model.ProviderJina}
+		req.Providers = append([]string(nil), model.DefaultProviders...)
 	}
 	if req.Limit <= 0 {
 		req.Limit = settings.DefaultLimit

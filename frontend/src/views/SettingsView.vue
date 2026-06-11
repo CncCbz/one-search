@@ -19,9 +19,7 @@
           <div class="settings-item">
             <span>默认平台</span>
             <el-select v-model="settings.default_providers" multiple collapse-tags collapse-tags-tooltip>
-              <el-option value="exa" label="Exa" />
-              <el-option value="you" label="You.com" />
-              <el-option value="jina" label="Jina" />
+              <el-option v-for="item in providerOptions" :key="item.value" :value="item.value" :label="item.label" />
             </el-select>
           </div>
           <div class="settings-item">
@@ -122,6 +120,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { api, AdminAPIKey, RuntimeSettings } from '../api/client'
+import { providerOptions } from '../utils/providers'
 
 const settings = ref<RuntimeSettings>()
 const adminAPIKey = ref<AdminAPIKey>()
