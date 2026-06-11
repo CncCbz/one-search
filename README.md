@@ -112,6 +112,8 @@ http://localhost:5173
 | 变量 | 是否必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `APP_ENV` | 推荐 | `production` in Compose | 生产环境请使用 `production`。 |
+| `HOST_PORT` | 否 | `5173` | all-in-one 在宿主机上暴露的端口；对应 Compose `ports` 左侧。 |
+| `HTTP_ADDR` | 否 | `:8080` | all-in-one 容器内后端监听地址；本地直跑 backend 时可改。 |
 | `POSTGRES_PASSWORD` | 是 | 无 | all-in-one PostgreSQL 密码。 |
 | `ADMIN_USERNAME` | 否 | `admin` | 首次创建管理员时使用。 |
 | `ADMIN_PASSWORD` | 生产必填 | 无 | 首次创建管理员时使用，生产环境不要使用弱密码。 |
@@ -157,14 +159,14 @@ docker compose up --build -d
 
 ## 反向代理与 HTTPS
 
-默认 Compose 将容器内 80 端口映射到宿主机 `5173`：
+默认 Compose 将容器内 80 端口映射到宿主机 `5173`，可通过 `.env` 里的 `HOST_PORT` 修改：
 
 ```yaml
 ports:
-  - "5173:80"
+  - "${HOST_PORT:-5173}:80"
 ```
 
-如果部署到公网，建议在外层使用 Caddy、Nginx、Traefik 或云厂商负载均衡配置 HTTPS，并将流量转发到 `http://127.0.0.1:5173`。
+如果部署到公网，建议在外层使用 Caddy、Nginx、Traefik 或云厂商负载均衡配置 HTTPS，并将流量转发到对应的宿主机端口。
 
 需要代理的路径：
 

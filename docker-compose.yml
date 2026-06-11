@@ -5,7 +5,6 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_ENV: ${APP_ENV:-production}
-      HTTP_ADDR: :8080
       POSTGRES_DB: ${POSTGRES_DB:-one_search}
       POSTGRES_USER: ${POSTGRES_USER:-one_search}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong postgres password}
@@ -30,7 +29,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5173:80"
+      - "${HOST_PORT:-5173}:80"
 
 volumes:
   postgres_data:
