@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ type Config struct {
 	BaseURL   string
 	UserAgent string
 	Timeout   time.Duration
+	ProxyURL  string
 }
 
 type HTTPProvider struct {
@@ -33,16 +35,45 @@ func NewHTTPProvider(cfg Config) *HTTPProvider {
 	if timeout == 0 {
 		timeout = 15 * time.Second
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	if proxyURL := NormalizeProxyURL(cfg.ProxyURL); proxyURL != "" {
+		if parsed, err := url.Parse(proxyURL); err == nil {
+			transport.Proxy = http.ProxyURL(parsed)
+		}
+	}
 	return &HTTPProvider{
 		name:      cfg.Name,
 		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
 		userAgent: cfg.UserAgent,
-		client:    &http.Client{Timeout: timeout},
+		client:    &http.Client{Timeout: timeout, Transport: transport},
 	}
 }
 
 func (p *HTTPProvider) Name() string {
 	return p.name
+}
+
+func NormalizeProxyURL(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if !strings.Contains(value, "://") {
+		value = "http://" + value
+	}
+	if runningInContainer() {
+		value = strings.Replace(value, "//127.0.0.1:", "//host.docker.internal:", 1)
+		value = strings.Replace(value, "//localhost:", "//host.docker.internal:", 1)
+	}
+	return value
+}
+
+func runningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return false
 }
 
 func (p *HTTPProvider) HealthCheck(ctx context.Context, key model.APIKey) error {

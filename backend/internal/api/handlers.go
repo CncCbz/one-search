@@ -50,12 +50,29 @@ type Handler struct {
 	store        AppStore
 	auth         *AuthService
 	orchestrator *search.Orchestrator
+	log          requestLogger
 	mcpEnabled   bool
 	mcpPath      string
 }
 
 func NewHandler(store AppStore, auth *AuthService, orchestrator *search.Orchestrator) *Handler {
 	return &Handler{store: store, auth: auth, orchestrator: orchestrator}
+}
+
+func (h *Handler) SetLogger(log requestLogger) {
+	h.log = log
+}
+
+func (h *Handler) logInfo(message string, fields map[string]interface{}) {
+	if h.log != nil {
+		h.log.Info(message, fields)
+	}
+}
+
+func (h *Handler) logError(message string, fields map[string]interface{}) {
+	if h.log != nil {
+		h.log.Error(message, fields)
+	}
 }
 
 func (h *Handler) EnableMCP(path string) {

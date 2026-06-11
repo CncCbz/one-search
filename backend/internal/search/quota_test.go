@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/one-search/one-search/backend/internal/model"
 )
@@ -81,6 +82,24 @@ func TestQuerySerperQuota(t *testing.T) {
 	}
 	if !result.Supported || result.Status != "success" || result.Unit != "credits" || result.Balance == nil || *result.Balance != 2400 || result.TotalQuantity == nil || *result.TotalQuantity != 100 || !strings.Contains(result.Message, "默认总额度 2500") {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestQueryOfficialQuotaUsesBoundedTimeout(t *testing.T) {
+	originalTimeout := quotaRequestTimeout
+	quotaRequestTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { quotaRequestTimeout = originalTimeout })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		writeQuotaJSON(t, w, map[string]interface{}{"data": map[string]interface{}{"attributes": map[string]interface{}{"balance": 100}}})
+	}))
+	defer server.Close()
+	withQuotaEndpoint(t, &youQuotaURL, server.URL)
+
+	_, err := QueryOfficialQuota(context.Background(), model.APIKey{ProviderName: model.ProviderYou, Alias: "you", Value: "you-key"}, model.ProviderKeyQuotaRequest{})
+	if err == nil {
+		t.Fatalf("QueryOfficialQuota returned nil error")
 	}
 }
 

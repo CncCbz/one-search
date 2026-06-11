@@ -17,6 +17,16 @@ services:
       MCP_ENABLED: ${MCP_ENABLED:-false}
       MCP_PATH: ${MCP_PATH:-/mcp}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      HTTP_PROXY: ${ONE_SEARCH_HTTP_PROXY:-}
+      HTTPS_PROXY: ${ONE_SEARCH_HTTPS_PROXY:-}
+      ALL_PROXY: ${ONE_SEARCH_ALL_PROXY:-}
+      NO_PROXY: ${ONE_SEARCH_NO_PROXY:-localhost,127.0.0.1,::1}
+      http_proxy: ${ONE_SEARCH_HTTP_PROXY:-}
+      https_proxy: ${ONE_SEARCH_HTTPS_PROXY:-}
+      all_proxy: ${ONE_SEARCH_ALL_PROXY:-}
+      no_proxy: ${ONE_SEARCH_NO_PROXY:-localhost,127.0.0.1,::1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:

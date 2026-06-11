@@ -109,23 +109,42 @@ func isKnownWeakSecret(value string) bool {
 }
 
 func loadEnvFiles() {
-	loadEnvFile(".env")
-	loadEnvFile("../.env")
+	protected := currentEnvKeys()
+	loadEnvFile("../.env", protected)
+	loadEnvFile(".env", protected)
 	appEnv := strings.TrimSpace(os.Getenv("APP_ENV"))
 	if appEnv == "" {
 		appEnv = "development"
 	}
 	if strings.EqualFold(appEnv, "development") || getBool("LOAD_DEVELOPMENT_ENV", false) {
-		loadEnvFile(".env.development")
-		loadEnvFile("../.env.development")
+		loadEnvFile("../.env.development", protected)
+		loadEnvFile(".env.development", protected)
 	}
 }
 
-func loadEnvFile(path string) {
+func currentEnvKeys() map[string]struct{} {
+	keys := make(map[string]struct{})
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		keys[key] = struct{}{}
+	}
+	return keys
+}
+
+func loadEnvFile(path string, protected map[string]struct{}) {
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	_ = godotenv.Load(path)
+	values, err := godotenv.Read(path)
+	if err != nil {
+		return
+	}
+	for key, value := range values {
+		if _, ok := protected[key]; ok {
+			continue
+		}
+		_ = os.Setenv(key, value)
+	}
 }
 
 func getString(key, fallback string) string {

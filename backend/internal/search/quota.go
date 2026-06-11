@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/one-search/one-search/backend/internal/model"
+	"github.com/one-search/one-search/backend/internal/provider"
 )
 
 var (
@@ -23,27 +24,28 @@ var (
 	tavilyUsageURL          = "https://api.tavily.com/usage"
 	firecrawlCreditUsageURL = "https://api.firecrawl.dev/v2/team/credit-usage"
 	braveWebSearchURL       = "https://api.search.brave.com/res/v1/web/search"
+	quotaRequestTimeout     = 20 * time.Second
 )
 
 // QueryOfficialQuota queries the upstream provider's official quota/billing endpoint.
 func QueryOfficialQuota(ctx context.Context, key model.APIKey, req model.ProviderKeyQuotaRequest) (model.ProviderKeyQuotaResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, quotaRequestTimeout)
 	defer cancel()
 	switch key.ProviderName {
 	case model.ProviderExa:
 		return queryExaQuota(ctx, key, req)
 	case model.ProviderYou:
-		return queryYouQuota(ctx, key)
+		return queryYouQuota(ctx, key, req.ProxyURL)
 	case model.ProviderJina:
-		return queryJinaQuota(ctx, key)
+		return queryJinaQuota(ctx, key, req.ProxyURL)
 	case model.ProviderTavily:
-		return queryTavilyQuota(ctx, key)
+		return queryTavilyQuota(ctx, key, req.ProxyURL)
 	case model.ProviderFirecrawl:
-		return queryFirecrawlQuota(ctx, key)
+		return queryFirecrawlQuota(ctx, key, req.ProxyURL)
 	case model.ProviderSerper:
 		return querySerperQuota(ctx, key)
 	case model.ProviderBrave:
-		return queryBraveQuota(ctx, key)
+		return queryBraveQuota(ctx, key, req.ProxyURL)
 	default:
 		return model.ProviderKeyQuotaResult{Provider: key.ProviderName, Alias: key.Alias, Supported: false, Status: "unsupported", Message: "该渠道暂未配置官方额度查询", FetchedAt: time.Now()}, nil
 	}
@@ -84,7 +86,7 @@ func queryExaQuota(ctx context.Context, key model.APIKey, req model.ProviderKeyQ
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("x-api-key", serviceKey)
-	payload, err := doJSONQuotaRequest(httpReq)
+	payload, err := doJSONQuotaRequest(httpReq, req.ProxyURL)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
@@ -117,14 +119,14 @@ func queryExaQuota(ctx context.Context, key model.APIKey, req model.ProviderKeyQ
 	}, nil
 }
 
-func queryYouQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuotaResult, error) {
+func queryYouQuota(ctx context.Context, key model.APIKey, proxyURL string) (model.ProviderKeyQuotaResult, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, youQuotaURL, nil)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("X-API-Key", key.Value)
-	payload, err := doJSONQuotaRequest(httpReq)
+	payload, err := doJSONQuotaRequest(httpReq, proxyURL)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
@@ -147,14 +149,14 @@ func queryYouQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuot
 	}, nil
 }
 
-func queryJinaQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuotaResult, error) {
+func queryJinaQuota(ctx context.Context, key model.APIKey, proxyURL string) (model.ProviderKeyQuotaResult, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, jinaQuotaURL, nil)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
 	httpReq.Header.Set("Accept", "text/plain")
 	httpReq.Header.Set("Authorization", "Bearer "+key.Value)
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := quotaHTTPClient(proxyURL)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
@@ -191,14 +193,14 @@ func queryJinaQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuo
 	}, nil
 }
 
-func queryTavilyQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuotaResult, error) {
+func queryTavilyQuota(ctx context.Context, key model.APIKey, proxyURL string) (model.ProviderKeyQuotaResult, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, tavilyUsageURL, nil)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+key.Value)
-	payload, err := doJSONQuotaRequest(httpReq)
+	payload, err := doJSONQuotaRequest(httpReq, proxyURL)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
@@ -233,14 +235,14 @@ func queryTavilyQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQ
 	}, nil
 }
 
-func queryFirecrawlQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuotaResult, error) {
+func queryFirecrawlQuota(ctx context.Context, key model.APIKey, proxyURL string) (model.ProviderKeyQuotaResult, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, firecrawlCreditUsageURL, nil)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+key.Value)
-	payload, err := doJSONQuotaRequest(httpReq)
+	payload, err := doJSONQuotaRequest(httpReq, proxyURL)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
@@ -293,7 +295,7 @@ func querySerperQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQ
 	}, nil
 }
 
-func queryBraveQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuotaResult, error) {
+func queryBraveQuota(ctx context.Context, key model.APIKey, proxyURL string) (model.ProviderKeyQuotaResult, error) {
 	endpoint := braveWebSearchURL + "?q=" + url.QueryEscape("brave quota check") + "&count=1"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -301,7 +303,7 @@ func queryBraveQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQu
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("X-Subscription-Token", key.Value)
-	payload, header, err := doJSONQuotaRequestWithHeader(httpReq)
+	payload, header, err := doJSONQuotaRequestWithHeader(httpReq, proxyURL)
 	if err != nil {
 		return model.ProviderKeyQuotaResult{}, err
 	}
@@ -326,13 +328,13 @@ func queryBraveQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQu
 	}, nil
 }
 
-func doJSONQuotaRequest(req *http.Request) (map[string]interface{}, error) {
-	payload, _, err := doJSONQuotaRequestWithHeader(req)
+func doJSONQuotaRequest(req *http.Request, proxyURL string) (map[string]interface{}, error) {
+	payload, _, err := doJSONQuotaRequestWithHeader(req, proxyURL)
 	return payload, err
 }
 
-func doJSONQuotaRequestWithHeader(req *http.Request) (map[string]interface{}, http.Header, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+func doJSONQuotaRequestWithHeader(req *http.Request, proxyURL string) (map[string]interface{}, http.Header, error) {
+	client := quotaHTTPClient(proxyURL)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -352,6 +354,17 @@ func doJSONQuotaRequestWithHeader(req *http.Request) (map[string]interface{}, ht
 		return nil, resp.Header, fmt.Errorf("decode official quota response: %w", err)
 	}
 	return payload, resp.Header, nil
+}
+
+func quotaHTTPClient(proxyURL string) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	if normalized := provider.NormalizeProxyURL(proxyURL); normalized != "" {
+		if parsed, err := url.Parse(normalized); err == nil {
+			transport.Proxy = http.ProxyURL(parsed)
+		}
+	}
+	return &http.Client{Timeout: quotaRequestTimeout, Transport: transport}
 }
 
 type rateLimitWindow struct {

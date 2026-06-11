@@ -174,6 +174,7 @@ type ProviderKeyQuotaRequest struct {
 	StartDate     string `json:"start_date"`
 	EndDate       string `json:"end_date"`
 	GroupBy       string `json:"group_by"`
+	ProxyURL      string `json:"-"`
 }
 
 type ProviderHealth struct {

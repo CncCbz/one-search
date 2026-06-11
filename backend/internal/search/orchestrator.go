@@ -69,6 +69,7 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	providerLimits := providerResultLimits(providerSettings)
 	keyRetryCounts := providerKeyRetryCounts(providerSettings)
 	providerTimeouts := providerTimeouts(providerSettings)
+	providerProxies := providerProxies(providerSettings)
 	providerRetryableErrors := providerRetryableErrors(providerSettings)
 	if !req.LimitExplicit && len(req.Providers) == 1 {
 		if limit := providerLimits[req.Providers[0]]; limit > 0 {
@@ -115,11 +116,11 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	var providerResults []providerExecution
 	switch req.Mode {
 	case model.SearchModeFallback:
-		providerResults = o.searchFallback(ctx, req, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerRetryableErrors)
+		providerResults = o.searchFallback(ctx, req, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, providerRetryableErrors)
 	case model.SearchModeSingle:
-		providerResults = o.searchSingle(ctx, req, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerRetryableErrors)
+		providerResults = o.searchSingle(ctx, req, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, providerRetryableErrors)
 	default:
-		providerResults = o.searchParallel(ctx, req, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerRetryableErrors)
+		providerResults = o.searchParallel(ctx, req, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, providerRetryableErrors)
 	}
 
 	results, deduped := mergeResults(providerResults, req)
@@ -171,24 +172,24 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	return response, nil
 }
 
-func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) []providerExecution {
+func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, providerProxies map[string]string, retryableErrors map[string]map[string]bool) []providerExecution {
 	var wg sync.WaitGroup
 	results := make([]providerExecution, len(req.Providers))
 	for index, name := range req.Providers {
 		wg.Add(1)
 		go func(i int, providerName string) {
 			defer wg.Done()
-			results[i] = o.callProvider(ctx, req, providerName, providerConfigs, providerLimits, keyRetryCounts, providerTimeouts, retryableErrors)
+			results[i] = o.callProvider(ctx, req, providerName, providerConfigs, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, retryableErrors)
 		}(index, name)
 	}
 	wg.Wait()
 	return results
 }
 
-func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) []providerExecution {
+func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, providerProxies map[string]string, retryableErrors map[string]map[string]bool) []providerExecution {
 	results := []providerExecution{}
 	for _, name := range req.Providers {
-		execution := o.callProvider(ctx, req, name, providerConfigs, providerLimits, keyRetryCounts, providerTimeouts, retryableErrors)
+		execution := o.callProvider(ctx, req, name, providerConfigs, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, retryableErrors)
 		results = append(results, execution)
 		if execution.err == nil && len(execution.results) > 0 {
 			break
@@ -197,17 +198,17 @@ func (o *Orchestrator) searchFallback(ctx context.Context, req model.SearchReque
 	return results
 }
 
-func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) []providerExecution {
+func (o *Orchestrator) searchSingle(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, providerProxies map[string]string, retryableErrors map[string]map[string]bool) []providerExecution {
 	if len(req.Providers) == 0 {
 		return nil
 	}
-	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerConfigs, providerLimits, keyRetryCounts, providerTimeouts, retryableErrors)}
+	return []providerExecution{o.callProvider(ctx, req, req.Providers[0], providerConfigs, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, retryableErrors)}
 }
 
-func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, retryableErrors map[string]map[string]bool) providerExecution {
+func (o *Orchestrator) callProvider(ctx context.Context, req model.SearchRequest, providerName string, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, providerProxies map[string]string, retryableErrors map[string]map[string]bool) providerExecution {
 	started := time.Now()
 	execution := providerExecution{provider: providerName, status: "error"}
-	adapter, ok := o.adapterForProvider(providerName, providerConfigs[providerName], providerTimeouts[providerName])
+	adapter, ok := o.adapterForProvider(providerName, providerConfigs[providerName], providerTimeouts[providerName], providerProxies[providerName])
 	if !ok {
 		err := &provider.Error{Type: provider.ErrorTypeUpstream, Message: "provider is not registered"}
 		execution.err = err
@@ -555,8 +556,8 @@ func providerConfigMap(providers []model.ProviderConfig) map[string]model.Provid
 	return items
 }
 
-func (o *Orchestrator) adapterForProvider(name string, cfg model.ProviderConfig, timeoutMS int) (provider.Provider, bool) {
-	providerCfg := provider.Config{BaseURL: strings.TrimSpace(cfg.BaseURL)}
+func (o *Orchestrator) adapterForProvider(name string, cfg model.ProviderConfig, timeoutMS int, proxyURL string) (provider.Provider, bool) {
+	providerCfg := provider.Config{BaseURL: strings.TrimSpace(cfg.BaseURL), ProxyURL: proxyURL}
 	if timeoutMS <= 0 {
 		timeoutMS = cfg.TimeoutMS
 	}
@@ -623,6 +624,18 @@ func providerTimeouts(settings map[string]map[string]interface{}) map[string]int
 	return timeouts
 }
 
+func providerProxies(settings map[string]map[string]interface{}) map[string]string {
+	proxies := map[string]string{}
+	for name, item := range settings {
+		if boolSetting(item, "proxy_enabled") {
+			if proxyURL := strings.TrimSpace(stringSetting(item, "proxy_url")); proxyURL != "" {
+				proxies[name] = proxyURL
+			}
+		}
+	}
+	return proxies
+}
+
 func providerRetryableErrors(settings map[string]map[string]interface{}) map[string]map[string]bool {
 	result := map[string]map[string]bool{}
 	for name, item := range settings {
@@ -639,6 +652,42 @@ func providerRetryableErrors(settings map[string]map[string]interface{}) map[str
 		result[name] = allowed
 	}
 	return result
+}
+
+func boolSetting(settings map[string]interface{}, key string) bool {
+	if settings == nil {
+		return false
+	}
+	value, ok := settings[key]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true") || strings.TrimSpace(typed) == "1"
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	default:
+		return false
+	}
+}
+
+func stringSetting(settings map[string]interface{}, key string) string {
+	if settings == nil {
+		return ""
+	}
+	value, ok := settings[key]
+	if !ok {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return fmt.Sprint(value)
 }
 
 func intSetting(settings map[string]interface{}, key string) int {
@@ -904,7 +953,7 @@ func (o *Orchestrator) TestProviderKey(ctx context.Context, keyID int64, query s
 		return model.ProviderCallSummary{}, nil, err
 	}
 	providerConfigByName := providerConfigMap(providerConfigs)
-	adapter, ok := o.adapterForProvider(key.ProviderName, providerConfigByName[key.ProviderName], 0)
+	adapter, ok := o.adapterForProvider(key.ProviderName, providerConfigByName[key.ProviderName], 0, "")
 	if !ok {
 		err := &provider.Error{Type: provider.ErrorTypeUpstream, Message: "provider is not registered"}
 		return model.ProviderCallSummary{Provider: key.ProviderName, KeyAlias: key.Alias, Status: "error", ErrorType: provider.ErrorType(err), Error: err.Error()}, nil, err

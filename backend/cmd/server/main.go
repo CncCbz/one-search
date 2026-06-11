@@ -80,6 +80,7 @@ func main() {
 	orchestrator := search.NewOrchestrator(registry, keyPool, store)
 	auth := api.NewAuthService(store, cfg.AdminSessionTTL, cfg.AdminLoginMaxAttempts, cfg.AdminLoginWindow, cfg.AdminLoginLockout)
 	handler := api.NewHandler(store, auth, orchestrator)
+	handler.SetLogger(log)
 	if cfg.MCPEnabled {
 		handler.EnableMCP(cfg.MCPPath)
 	}

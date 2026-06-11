@@ -211,7 +211,11 @@
                 </div>
                 <div class="advanced-field">
                   <div class="advanced-field-label">使用代理</div>
-                  <el-switch :model-value="false" disabled />
+                  <el-switch v-model="providerProxyEnabled" />
+                </div>
+                <div class="advanced-field advanced-field-wide">
+                  <div class="advanced-field-label">代理地址</div>
+                  <el-input v-model="providerProxyURL" :disabled="!providerProxyEnabled" placeholder="http://127.0.0.1:7897" />
                 </div>
               </div>
             </el-collapse-item>
@@ -311,6 +315,25 @@ const providerKeyRoutingStrategy = computed<string>({
     providerForm.value.settings = { ...(providerForm.value.settings || {}), key_routing_strategy: value }
   }
 })
+const providerProxyEnabled = computed<boolean>({
+  get() {
+    return Boolean(providerForm.value?.settings?.proxy_enabled)
+  },
+  set(value: boolean) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), proxy_enabled: value }
+  }
+})
+const providerProxyURL = computed<string>({
+  get() {
+    const value = providerForm.value?.settings?.proxy_url
+    return typeof value === 'string' ? value : ''
+  },
+  set(value: string) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), proxy_url: value.trim() }
+  }
+})
 
 function providerShortName(name: string) {
   if (/you/i.test(name)) return 'Y'
@@ -393,7 +416,7 @@ async function load() {
 
 function openProvider(provider: ProviderConfig) {
   const next = { ...JSON.parse(JSON.stringify(provider)), default_cache_enabled: false }
-  next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10), key_retry_count: Number(next.settings?.key_retry_count ?? 3), max_concurrency: normalizeMaxConcurrency(next.settings?.max_concurrency) }
+  next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10), key_retry_count: Number(next.settings?.key_retry_count ?? 3), max_concurrency: normalizeMaxConcurrency(next.settings?.max_concurrency), proxy_enabled: Boolean(next.settings?.proxy_enabled), proxy_url: typeof next.settings?.proxy_url === 'string' ? next.settings.proxy_url : '' }
   providerForm.value = next
   creatingRow.value = false
   draftKey.value = ''

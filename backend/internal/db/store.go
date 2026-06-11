@@ -610,8 +610,51 @@ func (s *Store) UpdateAPIToken(ctx context.Context, id int64, name string, allow
 }
 
 func (s *Store) DeleteAPIToken(ctx context.Context, id int64) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM api_tokens WHERE id=$1`, id)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO usage_daily (usage_date, api_token_id, provider_id, provider_key_id, requests_total, requests_success, requests_failed, cache_hits, results_total, latency_ms_total)
+		SELECT usage_date, NULL, provider_id, provider_key_id,
+		       SUM(requests_total), SUM(requests_success), SUM(requests_failed), SUM(cache_hits), SUM(results_total), SUM(latency_ms_total)
+		FROM usage_daily
+		WHERE api_token_id=$1
+		GROUP BY usage_date, provider_id, provider_key_id
+		ON CONFLICT (usage_date, api_token_id, provider_id, provider_key_id) DO UPDATE SET
+		requests_total=usage_daily.requests_total+EXCLUDED.requests_total,
+		requests_success=usage_daily.requests_success+EXCLUDED.requests_success,
+		requests_failed=usage_daily.requests_failed+EXCLUDED.requests_failed,
+		cache_hits=usage_daily.cache_hits+EXCLUDED.cache_hits,
+		results_total=usage_daily.results_total+EXCLUDED.results_total,
+		latency_ms_total=usage_daily.latency_ms_total+EXCLUDED.latency_ms_total
+	`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM usage_daily WHERE api_token_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO usage_meter_daily (usage_date, api_token_id, provider_key_id, provider_name, unit, quantity_total, cost_usd_total)
+		SELECT usage_date, NULL, provider_key_id, provider_name, unit, SUM(quantity_total), SUM(cost_usd_total)
+		FROM usage_meter_daily
+		WHERE api_token_id=$1
+		GROUP BY usage_date, provider_key_id, provider_name, unit
+		ON CONFLICT (usage_date, api_token_id, provider_key_id, provider_name, unit) DO UPDATE SET
+		quantity_total=usage_meter_daily.quantity_total+EXCLUDED.quantity_total,
+		cost_usd_total=usage_meter_daily.cost_usd_total+EXCLUDED.cost_usd_total
+	`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM usage_meter_daily WHERE api_token_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM api_tokens WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) RecordSearchLog(ctx context.Context, input model.SearchLogInput) error {

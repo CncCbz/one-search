@@ -105,6 +105,7 @@ func loggingMiddleware(log requestLogger) func(http.Handler) http.Handler {
 
 type requestLogger interface {
 	Info(message string, fields map[string]interface{})
+	Error(message string, fields map[string]interface{})
 }
 
 type statusRecorder struct {
