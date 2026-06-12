@@ -64,6 +64,7 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	if !req.ProvidersExplicit {
 		req.Providers = routeProviders(req.Providers, providerConfigs, settings.ProviderRoutingStrategy)
 	}
+	req.Providers = filterEnabledProviders(req.Providers, providerConfigs)
 	providerConfigByName := providerConfigMap(providerConfigs)
 	providerSettings := providerSettingsFromProviders(providerConfigs)
 	providerLimits := providerResultLimits(providerSettings)
@@ -405,6 +406,24 @@ func applyDefaults(req model.SearchRequest, settings model.RuntimeSettings) mode
 		req.CompatFormat = model.CompatFormatNative
 	}
 	return req
+}
+
+func filterEnabledProviders(providers []string, configs []model.ProviderConfig) []string {
+	if len(providers) == 0 || len(configs) == 0 {
+		return providers
+	}
+	configByName := map[string]model.ProviderConfig{}
+	for _, item := range configs {
+		configByName[item.Name] = item
+	}
+	filtered := make([]string, 0, len(providers))
+	for _, name := range providers {
+		if config, ok := configByName[name]; ok && !config.Enabled {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered
 }
 
 func routeProviders(providers []string, configs []model.ProviderConfig, strategy string) []string {
