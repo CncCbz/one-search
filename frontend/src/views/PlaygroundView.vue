@@ -6,7 +6,7 @@
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="搜索模式"><el-select v-model="form.mode"><el-option value="parallel" label="并发聚合" /><el-option value="fallback" label="失败转移" /><el-option value="single" label="单平台" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="搜索平台"><el-select v-model="form.providers" multiple><el-option v-for="item in providerOptions" :key="item.value" :value="item.value" :label="item.label" /></el-select></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="汇总返回结果数"><el-input-number v-model="form.limit" :min="1" :max="50" controls-position="right" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="汇总返回结果数"><el-input-number v-model="form.limit" :min="1" controls-position="right" /></el-form-item></el-col>
         </el-row>
         <div class="search-action-bar">
           <el-button type="primary" :loading="loading" @click="run">开始搜索</el-button>

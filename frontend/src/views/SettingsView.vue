@@ -24,7 +24,7 @@
           </div>
           <div class="settings-item">
             <span>汇总返回结果数</span>
-            <el-input-number v-model="settings.default_limit" :min="1" :max="50" controls-position="right" />
+            <el-input-number v-model="settings.default_limit" :min="1" controls-position="right" />
           </div>
           <div class="settings-item">
             <span>结果去重</span>

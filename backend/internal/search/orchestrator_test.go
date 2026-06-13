@@ -118,6 +118,22 @@ func TestFilterEnabledProvidersKeepsUnknownProviders(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsDoesNotCapLimitAtFifty(t *testing.T) {
+	request := applyDefaults(model.SearchRequest{Query: "golang", Limit: 120}, model.RuntimeSettings{DefaultLimit: 10, DefaultDedupe: true})
+	if got, want := request.Limit, 120; got != want {
+		t.Fatalf("Limit = %d, want %d", got, want)
+	}
+}
+
+func TestProviderResultLimitsDoNotCapAtFifty(t *testing.T) {
+	limits := providerResultLimits(map[string]map[string]interface{}{
+		model.ProviderExa: {"request_result_limit": 120},
+	})
+	if got, want := limits[model.ProviderExa], 120; got != want {
+		t.Fatalf("provider limit = %d, want %d", got, want)
+	}
+}
+
 func newDisabledProviderTestOrchestrator(keyPool *orchestratorTestKeyPool) *Orchestrator {
 	registry := provider.NewRegistry(orchestratorTestProvider{name: model.ProviderExa}, orchestratorTestProvider{name: model.ProviderSerper})
 	store := &orchestratorTestStore{

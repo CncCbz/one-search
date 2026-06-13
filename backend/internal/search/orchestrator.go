@@ -393,9 +393,6 @@ func applyDefaults(req model.SearchRequest, settings model.RuntimeSettings) mode
 	if req.Limit <= 0 {
 		req.Limit = 10
 	}
-	if req.Limit > 50 {
-		req.Limit = 50
-	}
 	if req.Dedupe == nil {
 		req.Dedupe = &settings.DefaultDedupe
 	}
@@ -606,9 +603,6 @@ func providerResultLimits(settings map[string]map[string]interface{}) map[string
 	limits := map[string]int{}
 	for name, item := range settings {
 		if limit := intSetting(item, "request_result_limit"); limit > 0 {
-			if limit > 50 {
-				limit = 50
-			}
 			limits[name] = limit
 		}
 	}

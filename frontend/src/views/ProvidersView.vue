@@ -169,7 +169,7 @@
                 </div>
                 <div class="advanced-field">
                   <div class="advanced-field-label">请求结果数</div>
-                  <el-input-number v-model="providerRequestLimit" :min="1" :max="50" controls-position="right" />
+                  <el-input-number v-model="providerRequestLimit" :min="1" controls-position="right" />
                 </div>
                 <div class="advanced-field">
                   <div class="advanced-field-label">换 key 重试</div>
