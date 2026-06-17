@@ -64,7 +64,7 @@ func Load() (Config, error) {
 		RequestBodyLimitBytes:   int64(getInt("REQUEST_BODY_LIMIT_BYTES", 1048576)),
 		ServerReadHeaderTimeout: time.Duration(getInt("SERVER_READ_HEADER_TIMEOUT_MS", 10000)) * time.Millisecond,
 		ServerReadTimeout:       time.Duration(getInt("SERVER_READ_TIMEOUT_MS", 30000)) * time.Millisecond,
-		ServerWriteTimeout:      time.Duration(getInt("SERVER_WRITE_TIMEOUT_MS", 30000)) * time.Millisecond,
+		ServerWriteTimeout:      time.Duration(getInt("SERVER_WRITE_TIMEOUT_MS", 65000)) * time.Millisecond,
 		ServerIdleTimeout:       time.Duration(getInt("SERVER_IDLE_TIMEOUT_MS", 60000)) * time.Millisecond,
 		AdminSessionTTL:         time.Duration(getInt("ADMIN_SESSION_TTL_HOURS", 24)) * time.Hour,
 		AdminLoginMaxAttempts:   getInt("ADMIN_LOGIN_MAX_ATTEMPTS", 5),

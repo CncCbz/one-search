@@ -77,7 +77,7 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 			req.Limit = limit
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(settings.RequestTimeoutMS)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(effectiveRequestTimeoutMS(settings.RequestTimeoutMS, providerTimeouts, req.Providers))*time.Millisecond)
 	defer cancel()
 
 	cacheKey := o.cacheKey(req, providerLimits)
@@ -635,6 +635,19 @@ func providerTimeouts(settings map[string]map[string]interface{}) map[string]int
 		}
 	}
 	return timeouts
+}
+
+func effectiveRequestTimeoutMS(runtimeTimeoutMS int, providerTimeouts map[string]int, providerNames []string) int {
+	timeout := runtimeTimeoutMS
+	for _, name := range providerNames {
+		if providerTimeouts[name] > 0 && providerTimeouts[name]+1000 > timeout {
+			timeout = providerTimeouts[name] + 1000
+		}
+	}
+	if timeout <= 0 {
+		return 20000
+	}
+	return timeout
 }
 
 func providerProxies(settings map[string]map[string]interface{}) map[string]string {

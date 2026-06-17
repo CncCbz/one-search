@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/one-search/one-search/backend/internal/model"
 	"github.com/one-search/one-search/backend/internal/provider"
@@ -56,7 +57,8 @@ func (p *orchestratorTestKeyPool) Acquire(ctx context.Context, providerName stri
 }
 
 type orchestratorTestProvider struct {
-	name string
+	name  string
+	delay time.Duration
 }
 
 func (p orchestratorTestProvider) Name() string {
@@ -64,6 +66,13 @@ func (p orchestratorTestProvider) Name() string {
 }
 
 func (p orchestratorTestProvider) Search(ctx context.Context, req model.SearchRequest, key model.APIKey) (model.ProviderResponse, error) {
+	if p.delay > 0 {
+		select {
+		case <-time.After(p.delay):
+		case <-ctx.Done():
+			return model.ProviderResponse{}, ctx.Err()
+		}
+	}
 	return model.ProviderResponse{Results: []model.SearchResult{{Title: p.name, URL: "https://example.com/" + p.name, Provider: p.name, Score: 1}}}, nil
 }
 
@@ -131,6 +140,39 @@ func TestProviderResultLimitsDoNotCapAtFifty(t *testing.T) {
 	})
 	if got, want := limits[model.ProviderExa], 120; got != want {
 		t.Fatalf("provider limit = %d, want %d", got, want)
+	}
+}
+
+func TestEffectiveRequestTimeoutUsesProviderTimeoutWhenLarger(t *testing.T) {
+	got := effectiveRequestTimeoutMS(20000, map[string]int{model.ProviderFirecrawl: 60000}, []string{model.ProviderFirecrawl})
+	if want := 61000; got != want {
+		t.Fatalf("effective timeout = %d, want %d", got, want)
+	}
+}
+
+func TestSearchProviderTimeoutCanExceedRuntimeTimeout(t *testing.T) {
+	keyPool := &orchestratorTestKeyPool{}
+	registry := provider.NewRegistry(orchestratorTestProvider{name: model.ProviderFirecrawl, delay: 60 * time.Millisecond})
+	store := &orchestratorTestStore{
+		settings: model.RuntimeSettings{
+			DefaultMode:      model.SearchModeSingle,
+			DefaultProviders: []string{model.ProviderFirecrawl},
+			DefaultLimit:     10,
+			DefaultDedupe:    true,
+			RequestTimeoutMS: 20,
+		},
+		providers: []model.ProviderConfig{
+			{Name: model.ProviderFirecrawl, Enabled: true, Priority: 1, Weight: 1, TimeoutMS: 100},
+		},
+	}
+	orchestrator := NewOrchestrator(registry, keyPool, store)
+
+	response, err := orchestrator.Search(context.Background(), model.SearchRequest{Query: "golang"}, "request-id", 0)
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(response.Results) != 1 || response.Providers[0].Status != "success" {
+		t.Fatalf("response = %+v, want successful provider result", response)
 	}
 }
 

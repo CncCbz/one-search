@@ -415,7 +415,7 @@ async function load() {
 }
 
 function openProvider(provider: ProviderConfig) {
-  const next = { ...JSON.parse(JSON.stringify(provider)), default_cache_enabled: false }
+  const next = JSON.parse(JSON.stringify(provider))
   next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10), key_retry_count: Number(next.settings?.key_retry_count ?? 3), max_concurrency: normalizeMaxConcurrency(next.settings?.max_concurrency), proxy_enabled: Boolean(next.settings?.proxy_enabled), proxy_url: typeof next.settings?.proxy_url === 'string' ? next.settings.proxy_url : '' }
   providerForm.value = next
   creatingRow.value = false
@@ -574,7 +574,11 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow: visible;
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .api-key-row {
