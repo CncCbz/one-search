@@ -3,16 +3,20 @@
     <div class="page-hd">
       <h1>仪表盘</h1>
       <div class="page-actions">
-        <div class="range-seg" role="tablist" aria-label="时间范围">
-          <button
+        <el-select
+          v-model="rangeKey"
+          class="range-select"
+          placeholder="时间范围"
+          aria-label="时间范围"
+          @change="setRange"
+        >
+          <el-option
             v-for="item in rangeOptions"
             :key="item.key"
-            type="button"
-            class="range-chip"
-            :class="{ on: rangeKey === item.key }"
-            @click="setRange(item.key)"
-          >{{ item.label }}</button>
-        </div>
+            :label="item.label"
+            :value="item.key"
+          />
+        </el-select>
         <el-button :icon="Refresh" circle title="刷新" :loading="loading" @click="load" />
       </div>
     </div>
@@ -30,8 +34,7 @@
       <section class="chart-grid">
         <div class="card chart-card">
           <div class="sec-hd">
-            <h3>请求与延迟</h3>
-            <span class="muted">{{ rangeMeta.label }}</span>
+            <h3>请求与延迟 <span class="sec-sub muted">{{ rangeMeta.label }}</span></h3>
           </div>
           <div ref="dualRef" class="chart dual" />
         </div>
@@ -159,11 +162,11 @@ import {
 import { providerLabel } from '../utils/providers'
 
 const RANGE_OPTIONS: { key: DashboardRangeKey; label: string }[] = [
-  { key: '24h', label: '24h' },
+  { key: '24h', label: '近 24 小时' },
   { key: 'today', label: '今日' },
-  { key: '7d', label: '7d' },
-  { key: '14d', label: '14d' },
-  { key: '30d', label: '30d' }
+  { key: '7d', label: '近 7 天' },
+  { key: '14d', label: '近 14 天' },
+  { key: '30d', label: '近 30 天' }
 ]
 const rangeOptions = RANGE_OPTIONS
 
@@ -460,9 +463,9 @@ function renderCharts() {
   dualChart = ensureChart(dualRef.value, dualChart)
   dualChart?.setOption({
     color: [brand, brand2],
-    grid: { left: 42, right: 42, top: 36, bottom: 28 },
+    grid: { left: 42, right: 42, top: 28, bottom: 40 },
     tooltip: { trigger: 'axis' },
-    legend: { top: 0, right: 0, textStyle: { color: '#667085' } },
+    legend: { bottom: 0, left: 'center', textStyle: { color: '#667085' } },
     xAxis: {
       type: 'category',
       data: dates,
@@ -845,28 +848,17 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 14px;
 }
-.range-seg {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #fff;
+.range-select {
+  width: 148px;
 }
-.range-chip {
-  height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font: inherit;
+.range-select :deep(.el-select__wrapper) {
+  min-height: 36px;
+  border-radius: 10px;
 }
-.range-chip.on {
-  background: var(--primary-soft);
-  color: var(--primary-ink);
-  font-weight: 700;
+.sec-sub {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .card {
@@ -912,13 +904,30 @@ onBeforeUnmount(() => {
 .chart.cost, .chart.fail { height: 220px; }
 .chart.fail { height: 140px; margin-top: 8px; padding: 0; }
 
-
 .bottom-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 14px;
+  align-items: stretch;
 }
-.bill-list { padding: 8px 10px 12px; }
+.bottom-grid > .card,
+.bottom-grid > .alert-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.bottom-grid .chart.cost {
+  flex: 1 1 auto;
+  min-height: 220px;
+  height: auto;
+  width: 100%;
+}
+.bill-list {
+  flex: 1 1 auto;
+  padding: 8px 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
 .bill-row {
   display: flex;
   justify-content: space-between;
@@ -930,7 +939,11 @@ onBeforeUnmount(() => {
 .bill-row strong { display: block; }
 .bill-row small { color: var(--muted); }
 .bill-row b { font-variant-numeric: tabular-nums; }
-.bill-row.total { border-top: 1px solid var(--border); margin-top: 4px; border-radius: 0; }
+.bill-row.total {
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+  border-radius: 0;
+}
 .alert-card {
   padding: 16px;
   border-left: 3px solid #b54708;
@@ -945,6 +958,12 @@ onBeforeUnmount(() => {
 }
 .alert-card h4 { margin: 0 0 6px; }
 .alert-card p { margin: 0; color: var(--muted); font-size: 13px; }
+.bottom-grid .alert-card .chart.fail {
+  flex: 1 1 auto;
+  min-height: 140px;
+  height: auto;
+  margin-top: 12px;
+}
 
 @media (max-width: 1100px) {
   .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }

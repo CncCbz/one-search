@@ -1,187 +1,255 @@
 <template>
   <div class="logs-page">
     <div class="page-hd">
-      <h1>请求日志</h1>
+      <div>
+        <h1>请求日志</h1>
+        <p class="page-sub">活动流 · 卡片时间线 · 渠道结果可展开</p>
+      </div>
       <div class="page-actions logs-actions">
         <el-switch v-model="autoRefresh" active-text="自动刷新" />
         <el-button :icon="Refresh" circle :loading="loading" title="刷新" @click="load" />
       </div>
     </div>
+
     <PageSkeleton v-if="loading && !loaded" type="table" :rows="8" class="logs-skeleton" />
-    <el-card v-else class="soft-card logs-card" shadow="never" v-loading="loading">
-      <el-table :data="logs" stripe row-key="id" class="logs-table" height="100%">
-        <el-table-column label="请求" min-width="360">
-          <template #default="scope">
-            <div class="log-main-cell">
-              <div class="log-query">{{ scope.row.query || '-' }}</div>
-              <div class="log-subline">
-                <span>{{ formatTime(scope.row.created_at) }}</span>
-                <span class="log-request-id">{{ shortRequestId(scope.row.request_id) }}</span>
+    <template v-else>
+      <section class="kpi-row">
+        <div class="kpi-card">
+          <span>近窗请求</span>
+          <b>{{ logs.length }}</b>
+        </div>
+        <div class="kpi-card">
+          <span>成功</span>
+          <b class="ok">{{ successCount }}</b>
+        </div>
+        <div class="kpi-card">
+          <span>失败</span>
+          <b class="bad">{{ failCount }}</b>
+        </div>
+        <div class="kpi-card">
+          <span>缓存命中</span>
+          <b>{{ cacheHitCount }}</b>
+        </div>
+      </section>
+
+      <section class="filters">
+        <el-input v-model="filterQ" clearable placeholder="搜索 query / request_id / 错误" :prefix-icon="Search" />
+        <el-select v-model="filterStatus" clearable placeholder="全部状态" style="width: 120px">
+          <el-option label="成功" value="success" />
+          <el-option label="失败" value="failed" />
+        </el-select>
+        <el-select v-model="filterMode" clearable placeholder="全部模式" style="width: 120px">
+          <el-option label="并发" value="parallel" />
+          <el-option label="转移" value="fallback" />
+          <el-option label="单平台" value="single" />
+        </el-select>
+        <el-select v-model="filterCache" clearable placeholder="缓存：全部" style="width: 130px">
+          <el-option label="命中" value="hit" />
+          <el-option label="未命中" value="miss" />
+        </el-select>
+      </section>
+
+      <div v-loading="loading" class="stream">
+        <article
+          v-for="row in filteredLogs"
+          :key="row.id"
+          class="log-card"
+          :class="{ fail: row.status !== 'success', active: selectedLog?.id === row.id && drawerVisible }"
+          @click="openDetail(row)"
+        >
+          <div class="rail" />
+          <div class="body">
+            <div class="q">{{ row.query || '-' }}</div>
+            <div class="meta">
+              <span>{{ formatTime(row.created_at) }}</span>
+              <code>{{ shortRequestId(row.request_id) }}</code>
+              <div class="tags">
+                <span class="tag" :class="row.status === 'success' ? 'ok' : 'bad'">{{ row.status === 'success' ? '成功' : '失败' }}</span>
+                <span class="tag">{{ modeLabel(row.mode) }}</span>
+                <span class="tag">{{ row.compat_format || '-' }}</span>
+                <span class="tag" :class="{ cache: row.cache_hit }">{{ row.cache_hit ? '缓存命中' : '未命中' }}</span>
               </div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="类型" width="220">
-          <template #default="scope">
-            <div class="log-tags">
-              <el-tag size="small" type="info">{{ modeLabel(scope.row.mode) }}</el-tag>
-              <el-tag size="small">{{ scope.row.compat_format }}</el-tag>
-              <el-tag size="small" :type="scope.row.cache_hit ? 'success' : 'info'">{{ scope.row.cache_hit ? '缓存命中' :
-                '未命中' }}</el-tag>
+            <div v-if="row.providers?.length" class="providers">
+              <span v-for="p in row.providers" :key="p" class="pdot">{{ providerLabel(p) }}</span>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="结果" width="110">
-          <template #default="scope">
-            <strong>{{ scope.row.result_count }}</strong>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="scope">
-            <el-tag :type="scope.row.status === 'success' ? 'success' : 'danger'">{{ scope.row.status === 'success' ?
-              '成功' : '失败' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="耗时" width="120">
-          <template #default="scope">{{ formatLatency(scope.row.latency_ms) }}</template>
-        </el-table-column>
-        <el-table-column label="" width="64" align="right">
-          <template #default="scope">
-            <el-button link type="primary" :icon="View" title="详情" @click="openDetail(scope.row)" />
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+            <div v-if="row.error_message" class="err-line">{{ row.error_message }}</div>
+          </div>
+          <div class="side">
+            <div class="lat" :class="latencyClass(row)">{{ formatLatency(row.latency_ms) }}</div>
+            <div class="cnt">{{ row.result_count }} 条结果</div>
+          </div>
+        </article>
+        <div v-if="!filteredLogs.length" class="empty muted">暂无匹配日志</div>
+      </div>
+    </template>
 
-    <el-dialog v-model="detailVisible" title="请求详细日志" width="1180px" top="3vh" class="log-detail-dialog">
-      <template v-if="selectedLog">
-        <el-tabs v-model="detailTab" class="log-detail-tabs">
-          <el-tab-pane label="请求参数" name="params">
-            <el-descriptions :column="2" border>
-              <el-descriptions-item label="请求 ID">{{ selectedLog.request_id }}</el-descriptions-item>
-              <el-descriptions-item label="时间">{{ formatTime(selectedLog.created_at) }}</el-descriptions-item>
-              <el-descriptions-item label="模式">{{ modeLabel(selectedLog.mode) }}</el-descriptions-item>
-              <el-descriptions-item label="格式">{{ selectedLog.compat_format }}</el-descriptions-item>
-              <el-descriptions-item label="状态">{{ selectedLog.status === 'success' ? '成功' : '失败'
-                }}</el-descriptions-item>
-              <el-descriptions-item label="延迟">{{ formatLatency(selectedLog.latency_ms) }}</el-descriptions-item>
-              <el-descriptions-item label="搜索词" :span="2">{{ selectedLog.query }}</el-descriptions-item>
-              <el-descriptions-item v-if="selectedLog.error_message" label="错误" :span="2">{{ selectedLog.error_message
-                }}</el-descriptions-item>
-            </el-descriptions>
+    <Teleport to="body">
+      <div v-if="drawerVisible" class="log-mask" @click="drawerVisible = false" />
+      <aside
+        class="log-drawer"
+        :class="{ open: drawerVisible }"
+        role="dialog"
+        aria-modal="true"
+        @keydown.esc="drawerVisible = false"
+      >
+        <template v-if="selectedLog">
+          <div class="dhd">
+            <div class="dhd-main">
+              <h2>{{ selectedLog.query || '请求详情' }}</h2>
+              <p>{{ selectedLog.request_id }} · {{ formatTime(selectedLog.created_at) }}</p>
+            </div>
+            <el-button circle :icon="Close" @click="drawerVisible = false" />
+          </div>
 
-            <div class="detail-section">
-              <div class="detail-title">请求参数</div>
-              <div class="request-param-grid">
-                <div v-for="item in requestParams" :key="item.label" class="request-param-item">
+          <el-tabs v-model="detailTab" class="drawer-tabs">
+            <el-tab-pane label="请求参数" name="params">
+              <div class="kv-grid">
+                <div v-for="item in requestParams" :key="item.label" class="kv">
                   <span>{{ item.label }}</span>
-                  <strong>{{ item.value }}</strong>
+                  <b>{{ item.value }}</b>
                 </div>
               </div>
-            </div>
-          </el-tab-pane>
+              <div v-if="selectedLog.error_message" class="err-box">{{ selectedLog.error_message }}</div>
+            </el-tab-pane>
 
-          <el-tab-pane label="请求结果" name="results">
-            <div class="detail-section first-section">
-              <div class="detail-title">渠道调用</div>
-              <el-table :data="providerCallRows" size="small" border row-key="key" max-height="360"
-                class="provider-call-table">
-                <el-table-column type="expand" width="46">
-                  <template #default="scope">
-                    <div class="provider-expanded-results">
-                      <div v-if="scope.row.results.length" class="result-list provider-result-list">
-                        <div v-for="(item, index) in scope.row.results" :key="resultKey(scope.row.key, index, item)"
-                          class="result-card">
-                          <div class="result-row">
-                            <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank"
-                              rel="noreferrer">{{ index + 1 }}. {{ item.title || item.url }}</a>
-                            <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title ||
-                              '无标题' }}</span>
-                            <div class="result-row-meta">
-                              <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score)
-                                }}</span>
-                              <el-tag size="small">{{ resultProviderLabel(item, scope.row.provider_name) }}</el-tag>
-                              <el-button v-if="hasResultDetails(item)" link class="result-expand-button"
-                                :icon="isResultOpen(resultKey(scope.row.key, index, item)) ? ArrowUp : ArrowDown"
-                                :title="isResultOpen(resultKey(scope.row.key, index, item)) ? '收起内容' : '展开内容'"
-                                @click.stop="toggleResultKey(resultKey(scope.row.key, index, item))" />
-                            </div>
-                          </div>
-                          <div v-if="hasResultDetails(item) && isResultOpen(resultKey(scope.row.key, index, item))"
-                            class="result-detail">
-                            <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
-                            <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
+            <el-tab-pane name="calls">
+              <template #label>
+                渠道调用
+                <em v-if="providerCallRows.length" class="tab-count">{{ providerCallRows.length }}</em>
+              </template>
+
+              <div v-if="providerCallRows.length" class="call-list">
+                <article
+                  v-for="call in providerCallRows"
+                  :key="call.key"
+                  class="call-card"
+                  :class="{ fail: !callSuccess(call) }"
+                >
+                  <div class="call-top" @click="toggleCall(call.key)">
+                    <div class="call-title">
+                      <strong>{{ providerLabel(call.provider_name) }}</strong>
+                      <small>
+                        {{ call.key_alias || '—' }}
+                        · 第 {{ call.attempt_index || 1 }} 次
+                        · {{ formatLatency(call.latency_ms) }}
+                        · {{ call.result_count || 0 }} 条
+                        <template v-if="call.cached"> · 缓存</template>
+                        <template v-if="call.will_retry"> · 将重试</template>
+                      </small>
+                    </div>
+                    <div class="call-actions">
+                      <el-tag size="small" :type="callSuccess(call) ? 'success' : 'danger'">
+                        {{ callSuccess(call) ? '成功' : '失败' }}
+                      </el-tag>
+                      <el-button
+                        link
+                        :icon="isCallOpen(call.key) ? ArrowUp : ArrowDown"
+                        :title="isCallOpen(call.key) ? '收起结果' : '展开结果'"
+                      />
+                    </div>
+                  </div>
+
+                  <div v-if="call.error_message" class="call-err">{{ call.error_message }}</div>
+
+                  <div v-if="isCallOpen(call.key)" class="call-results">
+                    <div v-if="call.results.length" class="result-list">
+                      <div
+                        v-for="(item, index) in call.results"
+                        :key="resultKey(call.key, index, item)"
+                        class="result-card"
+                      >
+                        <div class="result-row">
+                          <a
+                            v-if="item.url"
+                            class="result-title-link"
+                            :href="item.url"
+                            target="_blank"
+                            rel="noreferrer"
+                            @click.stop
+                          >{{ index + 1 }}. {{ item.title || item.url }}</a>
+                          <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题' }}</span>
+                          <div class="result-row-meta">
+                            <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score) }}</span>
+                            <el-button
+                              v-if="hasResultDetails(item)"
+                              link
+                              class="result-expand-button"
+                              :icon="isResultOpen(resultKey(call.key, index, item)) ? ArrowUp : ArrowDown"
+                              @click.stop="toggleResultKey(resultKey(call.key, index, item))"
+                            />
                           </div>
                         </div>
+                        <div
+                          v-if="hasResultDetails(item) && isResultOpen(resultKey(call.key, index, item))"
+                          class="result-detail"
+                        >
+                          <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
+                          <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
+                        </div>
                       </div>
-                      <el-empty v-else :description="callEmptyDescription(scope.row)" />
                     </div>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="provider_name" label="渠道" min-width="120">
-                  <template #default="scope">{{ providerLabel(scope.row.provider_name) }}</template>
-                </el-table-column>
-                <el-table-column prop="key_alias" label="密钥" min-width="130" />
-                <el-table-column prop="attempt_index" label="尝试" width="86">
-                  <template #default="scope">第 {{ scope.row.attempt_index || 1 }} 次</template>
-                </el-table-column>
-                <el-table-column prop="status" label="状态" width="132">
-                  <template #default="scope">
-                    <div class="call-status-cell">
-                      <el-tag :type="callSuccess(scope.row) ? 'success' : 'danger'">{{ callSuccess(scope.row) ? '成功' : '失败'
-                        }}</el-tag>
-                      <el-tag v-if="scope.row.will_retry" size="small" type="warning">将重试</el-tag>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="result_count" label="结果" width="80" />
-                <el-table-column prop="latency_ms" label="延迟" width="100"><template #default="scope">{{
-                  formatLatency(scope.row.latency_ms) }}</template></el-table-column>
-                <el-table-column prop="cached" label="缓存" width="80"><template #default="scope">{{ scope.row.cached ?
-                    '是' : '否' }}</template></el-table-column>
-                <el-table-column prop="error_message" label="错误" min-width="220"><template #default="scope">{{
-                  scope.row.error_message || '-' }}</template></el-table-column>
-              </el-table>
-            </div>
+                    <div v-else class="empty-call muted">{{ callEmptyDescription(call) }}</div>
+                  </div>
+                </article>
+              </div>
+              <el-empty v-else description="暂无渠道调用记录" :image-size="72" />
+            </el-tab-pane>
 
-            <div class="detail-section">
-              <div class="detail-title">{{ showProviderResults ? '合并结果' : '搜索结果' }}</div>
-              <div v-if="searchResults.length" class="result-list merged-result-list">
-                <div v-for="(item, index) in searchResults" :key="resultKey('merged', index, item)" class="result-card">
+            <el-tab-pane name="results">
+              <template #label>
+                {{ showProviderResults ? '合并结果' : '搜索结果' }}
+                <em v-if="searchResults.length" class="tab-count">{{ searchResults.length }}</em>
+              </template>
+
+              <div v-if="searchResults.length" class="result-list merged">
+                <div
+                  v-for="(item, index) in searchResults"
+                  :key="resultKey('merged', index, item)"
+                  class="result-card"
+                >
                   <div class="result-row">
-                    <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank" rel="noreferrer">{{
-                      index + 1
-                      }}. {{ item.title || item.url }}</a>
-                    <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题'
-                      }}</span>
+                    <a
+                      v-if="item.url"
+                      class="result-title-link"
+                      :href="item.url"
+                      target="_blank"
+                      rel="noreferrer"
+                    >{{ index + 1 }}. {{ item.title || item.url }}</a>
+                    <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题' }}</span>
                     <div class="result-row-meta">
                       <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score) }}</span>
                       <el-tag size="small">{{ resultProviderLabel(item) }}</el-tag>
-                      <el-button v-if="hasResultDetails(item)" link class="result-expand-button"
+                      <el-button
+                        v-if="hasResultDetails(item)"
+                        link
+                        class="result-expand-button"
                         :icon="isResultOpen(resultKey('merged', index, item)) ? ArrowUp : ArrowDown"
-                        :title="isResultOpen(resultKey('merged', index, item)) ? '收起内容' : '展开内容'"
-                        @click.stop="toggleResultKey(resultKey('merged', index, item))" />
+                        @click.stop="toggleResultKey(resultKey('merged', index, item))"
+                      />
                     </div>
                   </div>
-                  <div v-if="hasResultDetails(item) && isResultOpen(resultKey('merged', index, item))"
-                    class="result-detail">
+                  <div
+                    v-if="hasResultDetails(item) && isResultOpen(resultKey('merged', index, item))"
+                    class="result-detail"
+                  >
                     <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
                     <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
                   </div>
                 </div>
               </div>
-              <el-empty v-else description="暂无搜索结果" />
-            </div>
-          </el-tab-pane>
-        </el-tabs>
-      </template>
-    </el-dialog>
+              <el-empty v-else description="暂无搜索结果" :image-size="72" />
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+      </aside>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowDown, ArrowUp, Refresh, View } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Close, Refresh, Search } from '@element-plus/icons-vue'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { api, ProviderCallLog, SearchLog } from '../api/client'
 import { providerLabel } from '../utils/providers'
@@ -239,11 +307,38 @@ const loading = ref(true)
 const loaded = ref(false)
 const autoRefresh = ref(true)
 let refreshTimer: ReturnType<typeof window.setInterval> | undefined
-const detailVisible = ref(false)
+const drawerVisible = ref(false)
 const detailTab = ref('params')
 const selectedLog = ref<SearchLog | null>(null)
 const detailCalls = ref<ProviderCallLog[]>([])
 const openResultKeys = ref<string[]>([])
+const openCallKeys = ref<string[]>([])
+
+const filterQ = ref('')
+const filterStatus = ref('')
+const filterMode = ref('')
+const filterCache = ref('')
+
+const successCount = computed(() => logs.value.filter((item) => item.status === 'success').length)
+const failCount = computed(() => logs.value.filter((item) => item.status !== 'success').length)
+const cacheHitCount = computed(() => logs.value.filter((item) => item.cache_hit).length)
+
+const filteredLogs = computed(() => {
+  const q = filterQ.value.trim().toLowerCase()
+  return logs.value.filter((row) => {
+    if (filterStatus.value === 'success' && row.status !== 'success') return false
+    if (filterStatus.value === 'failed' && row.status === 'success') return false
+    if (filterMode.value && row.mode !== filterMode.value) return false
+    if (filterCache.value === 'hit' && !row.cache_hit) return false
+    if (filterCache.value === 'miss' && row.cache_hit) return false
+    if (!q) return true
+    return (
+      row.query?.toLowerCase().includes(q) ||
+      row.request_id?.toLowerCase().includes(q) ||
+      row.error_message?.toLowerCase().includes(q)
+    )
+  })
+})
 
 const responseLog = computed(() => (selectedLog.value?.response_json || {}) as SearchResponseLog)
 const searchResults = computed(() => responseLog.value.results || [])
@@ -316,10 +411,14 @@ const requestParams = computed(() => {
   return [
     { label: '搜索词', value: String(request.query || selectedLog.value?.query || '-') },
     { label: '模式', value: modeLabel(String(request.mode || selectedLog.value?.mode || '-')) },
-    { label: '渠道', value: Array.isArray(request.providers) ? request.providers.map((item) => providerLabel(String(item))).join('、') : '-' },
+    { label: '渠道', value: Array.isArray(request.providers) ? request.providers.map((item) => providerLabel(String(item))).join('、') : (selectedLog.value?.providers || []).map(providerLabel).join('、') || '-' },
     { label: '结果数', value: String(request.limit || selectedLog.value?.result_count || '-') },
     { label: '缓存策略', value: String(request.cache || selectedLog.value?.cache_policy || '-') },
-    { label: '去重', value: request.dedupe === false ? '否' : '是' }
+    { label: '去重', value: request.dedupe === false ? '否' : '是' },
+    { label: '状态', value: selectedLog.value?.status === 'success' ? '成功' : '失败' },
+    { label: '延迟', value: formatLatency(selectedLog.value?.latency_ms || 0) },
+    { label: '格式', value: selectedLog.value?.compat_format || '-' },
+    { label: 'Request ID', value: selectedLog.value?.request_id || '-' }
   ]
 })
 
@@ -355,6 +454,12 @@ function formatLatency(value: number) {
   return `${latency}ms`
 }
 
+function latencyClass(row: SearchLog) {
+  if (row.status !== 'success') return 'bad'
+  if (Number(row.latency_ms || 0) > 2000) return 'slow'
+  return ''
+}
+
 function callSuccess(call: ProviderCallLog) {
   return call.status === 'success'
 }
@@ -366,6 +471,7 @@ function providerCallKey(call: ProviderCallLog, index: number) {
 function callEmptyDescription(call: ProviderCallRow) {
   if (call.error_message) return call.will_retry ? `${call.error_message}，将换 key 重试` : call.error_message
   if (call.will_retry) return '本次失败，已换 key 重试'
+  if (Number(call.result_count || 0) > 0) return `调用摘要显示 ${call.result_count} 条结果，但正文未写入日志（常见于 seed/旧数据）`
   return '该渠道暂无搜索结果'
 }
 
@@ -389,6 +495,18 @@ function toggleResultKey(key: string) {
   openResultKeys.value = [...openResultKeys.value, key]
 }
 
+function isCallOpen(key: string) {
+  return openCallKeys.value.includes(key)
+}
+
+function toggleCall(key: string) {
+  if (isCallOpen(key)) {
+    openCallKeys.value = openCallKeys.value.filter((item) => item !== key)
+    return
+  }
+  openCallKeys.value = [...openCallKeys.value, key]
+}
+
 async function load() {
   loading.value = true
   try {
@@ -403,7 +521,7 @@ function startAutoRefresh() {
   stopAutoRefresh()
   if (!autoRefresh.value) return
   refreshTimer = window.setInterval(() => {
-    if (!detailVisible.value) void load()
+    if (!drawerVisible.value) void load()
   }, 10000)
 }
 
@@ -417,9 +535,10 @@ async function openDetail(row: SearchLog) {
   const result = await api.logDetail(row.id)
   selectedLog.value = result.log
   detailCalls.value = result.calls
-  detailTab.value = 'params'
+  detailTab.value = 'calls'
   openResultKeys.value = []
-  detailVisible.value = true
+  openCallKeys.value = [] // 各渠道结果默认收起，点击卡片再展开
+  drawerVisible.value = true
 }
 
 watch(autoRefresh, startAutoRefresh)
@@ -440,180 +559,297 @@ onBeforeUnmount(stopAutoRefresh)
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  gap: 12px;
 }
-.logs-page .page-hd {
+.page-hd {
   flex: 0 0 auto;
-  margin-bottom: 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0;
 }
+.page-hd h1 { margin: 0; }
+.page-sub {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.logs-actions { gap: 12px; }
 .logs-skeleton {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
-.logs-card {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.logs-card :deep(.el-card__body) {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 0;
-}
-.logs-table {
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-}
-.logs-actions {
-  gap: 12px;
-}
 
-.logs-table :deep(.el-table__cell) {
-  padding: 12px 0;
-}
-
-.log-main-cell {
-  min-width: 0;
-}
-
-.log-query {
-  overflow: hidden;
-  color: var(--text);
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.log-subline {
-  display: flex;
-  align-items: center;
+.kpi-row {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+.kpi-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kpi-card span { color: var(--muted); font-size: 12px; }
+.kpi-card b {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-card b.ok { color: #12b76a; }
+.kpi-card b.bad { color: #f04438; }
+
+.filters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.filters :deep(.el-input) { flex: 1 1 220px; min-width: 180px; }
+
+.stream {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+  padding-bottom: 8px;
+}
+.log-card {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  gap: 0 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .12s ease, transform .12s ease, box-shadow .12s ease;
+}
+.log-card:hover {
+  border-color: #c9d2dc;
+  transform: translateY(-1px);
+}
+.log-card.active {
+  border-color: #9fd4be;
+  box-shadow: 0 0 0 3px rgba(11, 110, 79, .08), var(--shadow);
+}
+.rail { background: #12b76a; min-height: 100%; }
+.log-card.fail .rail { background: #f04438; }
+.body { padding: 14px 0 14px 2px; min-width: 0; }
+.q {
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta {
   margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   color: var(--muted);
   font-size: 12px;
-}
-
-.log-request-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.log-tags {
-  display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
 }
-
-.log-detail-dialog :deep(.el-dialog) {
-  max-width: calc(100vw - 32px);
+.meta code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #98a2b3;
 }
-
-.log-detail-dialog :deep(.el-dialog__body) {
-  max-height: calc(100vh - 116px);
-  overflow: hidden;
-}
-
-.log-detail-tabs :deep(.el-tabs__content) {
-  max-height: calc(100vh - 220px);
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.detail-section {
-  margin-top: 16px;
-}
-
-.first-section {
-  margin-top: 2px;
-}
-
-.detail-title {
-  margin-bottom: 8px;
-  color: var(--text);
-  font-weight: 800;
-}
-
-.request-param-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-top: 1px solid var(--border);
-  border-left: 1px solid var(--border);
-}
-
-.request-param-item {
-  display: flex;
+.tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  background: #f2f4f7;
+  color: #475467;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 10px 12px;
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
 }
-
-.request-param-item span {
-  color: var(--muted);
+.tag.ok { background: #ecfdf3; color: #027a48; }
+.tag.bad { background: #fef3f2; color: #b42318; }
+.tag.cache { background: #e8f6f0; color: #085c42; }
+.providers { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.pdot {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #f2f4f7;
+  color: #475467;
 }
-
-.request-param-item strong {
-  min-width: 0;
+.err-line {
+  margin-top: 8px;
+  color: #b42318;
+  font-size: 12px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
 }
-
-.provider-call-table {
-  width: 100%;
-}
-
-.call-status-cell {
+.side {
+  padding: 14px 16px 14px 0;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
   gap: 6px;
 }
+.lat {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 16px;
+}
+.lat.slow { color: #f79009; }
+.lat.bad { color: #f04438; }
+.cnt { color: var(--muted); font-size: 12px; }
+.empty {
+  padding: 40px;
+  text-align: center;
+  background: var(--card);
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+}
+.muted { color: var(--muted); }
 
-.provider-call-table :deep(.el-table__expanded-cell) {
+/* drawer chrome lives in unscoped block below (Teleport -> body) */
+.tab-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e8f6f0;
+  color: #085c42;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  align-items: center;
+  justify-content: center;
+}
+.kv-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.kv {
+  border: 1px solid var(--border);
+  border-radius: 12px;
   padding: 10px 12px;
-  background: rgba(47, 148, 97, .04);
+  background: #fbfcfd;
+}
+.kv span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.kv b {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  word-break: break-all;
+  font-weight: 700;
+}
+.err-box {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fef3f2;
+  color: #b42318;
+  font-size: 13px;
 }
 
-.provider-expanded-results {
-  max-height: 320px;
-  overflow-y: auto;
-  padding-right: 4px;
+.call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.call-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+}
+.call-card.fail {
+  border-color: #fecdca;
+  background: linear-gradient(180deg, #fff8f7, #fff);
+}
+.call-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  cursor: pointer;
+}
+.call-title strong { display: block; font-size: 14px; }
+.call-title small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.call-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.call-err {
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef3f2;
+  color: #b42318;
+  font-size: 12px;
+}
+.call-results {
+  border-top: 1px solid var(--border);
+  background: rgba(47, 148, 97, .04);
+  padding: 10px 12px 12px;
+}
+.empty-call {
+  padding: 10px 4px;
+  font-size: 13px;
 }
 
 .result-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-right: 2px;
 }
-
-.provider-result-list {
-  padding-bottom: 2px;
-}
-
-.merged-result-list {
-  max-height: 420px;
-  overflow-y: auto;
-}
-
+.result-list.merged { padding-top: 2px; }
 .result-card {
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: var(--el-border-radius-base);
+  border-radius: 10px;
   background: #fff;
 }
-
 .result-row {
   display: flex;
   align-items: center;
@@ -621,7 +857,6 @@ onBeforeUnmount(stopAutoRefresh)
   gap: 12px;
   min-height: 28px;
 }
-
 .result-title-link {
   min-width: 0;
   overflow: hidden;
@@ -631,28 +866,19 @@ onBeforeUnmount(stopAutoRefresh)
   white-space: nowrap;
   text-decoration: none;
 }
-
-.result-title-link:hover {
-  color: var(--primary);
-}
-
-.result-title-text {
-  display: block;
-}
-
+.result-title-link:hover { color: var(--primary); }
+.result-title-text { display: block; }
 .result-row-meta {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
 }
-
 .result-score {
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
 }
-
 .result-expand-button {
   width: 24px;
   height: 24px;
@@ -660,39 +886,268 @@ onBeforeUnmount(stopAutoRefresh)
   padding: 0;
   color: var(--primary);
 }
-
 .result-detail {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
-
 .result-snippet {
   margin: 0;
   color: var(--muted);
   line-height: 1.6;
   white-space: pre-wrap;
 }
-
 .result-content {
   margin-top: 8px;
   color: var(--text);
 }
 
-@media (max-width: 1100px) {
-  .request-param-grid {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 900px) {
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  .side { padding-right: 12px; }
+  .kv-grid { grid-template-columns: 1fr; }
 }
-
 @media (max-width: 720px) {
   .result-row {
     align-items: flex-start;
     flex-direction: column;
   }
+  .result-row-meta { flex-wrap: wrap; }
+}
+</style>
 
-  .result-row-meta {
-    flex-wrap: wrap;
+<style>
+/* Teleport to body — must be unscoped */
+.log-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(15, 20, 25, 0.28);
+  backdrop-filter: blur(2px);
+}
+.log-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2001;
+  width: min(560px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--border, #e6e8ec);
+  box-shadow: -12px 0 40px rgba(16, 24, 40, 0.12);
+  transform: translateX(100%);
+  transition: transform 0.18s ease;
+  pointer-events: none;
+  padding: 16px 18px;
+  box-sizing: border-box;
+}
+.log-drawer.open {
+  transform: none;
+  pointer-events: auto;
+}
+.log-drawer .dhd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border, #e6e8ec);
+  margin-bottom: 4px;
+  flex: 0 0 auto;
+}
+.log-drawer .dhd h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.log-drawer .dhd p {
+  margin: 4px 0 0;
+  color: var(--muted, #667085);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+.log-drawer .drawer-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.log-drawer .drawer-tabs .el-tabs__header {
+  flex: 0 0 auto;
+}
+.log-drawer .drawer-tabs .el-tabs__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+.log-drawer .drawer-tabs .el-tab-pane {
+  padding-bottom: 16px;
+}
+.log-drawer .tab-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e8f6f0;
+  color: #085c42;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  align-items: center;
+  justify-content: center;
+}
+.log-drawer .kv-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.log-drawer .kv {
+  border: 1px solid var(--border, #e6e8ec);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fbfcfd;
+}
+.log-drawer .kv span {
+  display: block;
+  color: var(--muted, #667085);
+  font-size: 11px;
+}
+.log-drawer .kv b {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  word-break: break-all;
+  font-weight: 700;
+}
+.log-drawer .err-box {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fef3f2;
+  color: #b42318;
+  font-size: 13px;
+}
+.log-drawer .call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.log-drawer .call-card {
+  border: 1px solid var(--border, #e6e8ec);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+}
+.log-drawer .call-card.fail {
+  border-color: #fecdca;
+  background: linear-gradient(180deg, #fff8f7, #fff);
+}
+.log-drawer .call-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  cursor: pointer;
+}
+.log-drawer .call-title strong { display: block; font-size: 14px; }
+.log-drawer .call-title small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted, #667085);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.log-drawer .call-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.log-drawer .call-err {
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef3f2;
+  color: #b42318;
+  font-size: 12px;
+}
+.log-drawer .call-results {
+  border-top: 1px solid var(--border, #e6e8ec);
+  background: rgba(47, 148, 97, 0.04);
+  padding: 10px 12px 12px;
+}
+.log-drawer .empty-call {
+  padding: 10px 4px;
+  font-size: 13px;
+  color: var(--muted, #667085);
+}
+.log-drawer .result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.log-drawer .result-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e6e8ec);
+  border-radius: 10px;
+  background: #fff;
+}
+.log-drawer .result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+.log-drawer .result-title-link {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text, #0f1419);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.log-drawer .result-title-link:hover { color: var(--primary, #0b6e4f); }
+.log-drawer .result-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.log-drawer .result-score {
+  color: var(--muted, #667085);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.log-drawer .result-detail {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #e6e8ec);
+}
+.log-drawer .result-snippet {
+  margin: 0;
+  color: var(--muted, #667085);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.log-drawer .result-content {
+  margin-top: 8px;
+  color: var(--text, #0f1419);
+}
+@media (max-width: 720px) {
+  .log-drawer .kv-grid { grid-template-columns: 1fr; }
+  .log-drawer .result-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>
