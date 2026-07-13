@@ -85,13 +85,13 @@
     </template>
 
     <Teleport to="body">
-      <div v-if="drawerVisible" class="log-mask" @click="drawerVisible = false" />
+      <div v-if="drawerVisible" class="log-mask" @click="closeDrawer" />
       <aside
         class="log-drawer"
         :class="{ open: drawerVisible }"
         role="dialog"
         aria-modal="true"
-        @keydown.esc="drawerVisible = false"
+        @keydown.esc="closeDrawer"
       >
         <template v-if="selectedLog">
           <div class="dhd">
@@ -99,10 +99,20 @@
               <h2>{{ selectedLog.query || '请求详情' }}</h2>
               <p>{{ selectedLog.request_id }} · {{ formatTime(selectedLog.created_at) }}</p>
             </div>
-            <el-button circle :icon="Close" @click="drawerVisible = false" />
+            <el-button circle :icon="Close" @click="closeDrawer" />
           </div>
 
-          <el-tabs v-model="detailTab" class="drawer-tabs">
+          <div v-if="detailLoading" class="drawer-skel" aria-busy="true" aria-label="加载详情">
+            <div class="sk-tabs">
+              <span /><span /><span />
+            </div>
+            <div v-for="n in 4" :key="n" class="sk-call">
+              <div class="sk-line w-40" />
+              <div class="sk-line w-70" />
+            </div>
+          </div>
+
+          <el-tabs v-else v-model="detailTab" class="drawer-tabs">
             <el-tab-pane label="请求参数" name="params">
               <div class="kv-grid">
                 <div v-for="item in requestParams" :key="item.label" class="kv">
@@ -308,11 +318,13 @@ const loaded = ref(false)
 const autoRefresh = ref(true)
 let refreshTimer: ReturnType<typeof window.setInterval> | undefined
 const drawerVisible = ref(false)
+const detailLoading = ref(false)
 const detailTab = ref('params')
 const selectedLog = ref<SearchLog | null>(null)
 const detailCalls = ref<ProviderCallLog[]>([])
 const openResultKeys = ref<string[]>([])
 const openCallKeys = ref<string[]>([])
+let detailRequestSeq = 0
 
 const filterQ = ref('')
 const filterStatus = ref('')
@@ -531,14 +543,29 @@ function stopAutoRefresh() {
   refreshTimer = undefined
 }
 
+function closeDrawer() {
+  drawerVisible.value = false
+  detailLoading.value = false
+  detailRequestSeq += 1
+}
+
 async function openDetail(row: SearchLog) {
-  const result = await api.logDetail(row.id)
-  selectedLog.value = result.log
-  detailCalls.value = result.calls
+  const requestId = ++detailRequestSeq
+  selectedLog.value = row
+  detailCalls.value = []
   detailTab.value = 'calls'
   openResultKeys.value = []
-  openCallKeys.value = [] // 各渠道结果默认收起，点击卡片再展开
+  openCallKeys.value = []
   drawerVisible.value = true
+  detailLoading.value = true
+  try {
+    const result = await api.logDetail(row.id)
+    if (requestId !== detailRequestSeq) return
+    selectedLog.value = result.log
+    detailCalls.value = result.calls
+  } finally {
+    if (requestId === detailRequestSeq) detailLoading.value = false
+  }
 }
 
 watch(autoRefresh, startAutoRefresh)
@@ -969,6 +996,48 @@ onBeforeUnmount(stopAutoRefresh)
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   word-break: break-all;
+}
+.log-drawer .drawer-skel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 4px 20px;
+}
+.log-drawer .drawer-skel .sk-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.log-drawer .drawer-skel .sk-tabs span {
+  width: 72px;
+  height: 28px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #eef1f4 25%, #f7f8fa 50%, #eef1f4 75%);
+  background-size: 200% 100%;
+  animation: log-skel 1.2s ease infinite;
+}
+.log-drawer .drawer-skel .sk-call {
+  padding: 14px;
+  border: 1px solid var(--border, #e6e8ec);
+  border-radius: 14px;
+  background: #fbfcfd;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.log-drawer .drawer-skel .sk-line {
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #eef1f4 25%, #f7f8fa 50%, #eef1f4 75%);
+  background-size: 200% 100%;
+  animation: log-skel 1.2s ease infinite;
+}
+.log-drawer .drawer-skel .sk-line.w-40 { width: 40%; }
+.log-drawer .drawer-skel .sk-line.w-70 { width: 70%; }
+@keyframes log-skel {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
 }
 .log-drawer .drawer-tabs {
   flex: 1 1 auto;
