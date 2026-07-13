@@ -123,6 +123,7 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Patch("/providers/{name}", h.updateProvider)
 			r.Get("/keys", h.listKeys)
 			r.Post("/keys", h.createKey)
+			r.Get("/keys/{id}/secret", h.revealKey)
 			r.Patch("/keys/{id}", h.updateKey)
 			r.Post("/keys/{id}/test", h.testKey)
 			r.Post("/keys/{id}/quota", h.keyQuota)
@@ -527,6 +528,28 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"keys": keys})
+}
+
+func (h *Handler) revealKey(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	key, err := h.store.GetAPIKeyByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	h.audit(r, "admin", "provider_key.reveal", "provider_key", strconv.FormatInt(id, 10), map[string]interface{}{"provider": key.ProviderName, "alias": key.Alias})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":              key.ID,
+		"provider_name":   key.ProviderName,
+		"alias":           key.Alias,
+		"key":             key.Value,
+		"key_hint":        key.KeyHint,
+		"exa_service_key": key.ExaServiceKey,
+	})
 }
 
 func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {

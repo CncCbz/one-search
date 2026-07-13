@@ -290,6 +290,7 @@ export const api = {
   updateProvider: (provider: ProviderConfig) => apiFetch('/api/admin/providers/' + provider.name, { method: 'PATCH', body: JSON.stringify(provider) }),
   keys: () => apiFetch<{ keys: ProviderKey[] }>('/api/admin/keys'),
   createKey: (payload: Record<string, unknown>) => apiFetch<ProviderKey>('/api/admin/keys', { method: 'POST', body: JSON.stringify(payload) }),
+  revealKey: (id: number) => apiFetch<{ id: number; provider_name: string; alias: string; key: string; key_hint: string; exa_service_key?: string }>('/api/admin/keys/' + id + '/secret'),
   updateKey: (id: number, payload: Record<string, unknown>) => apiFetch<ProviderKey>('/api/admin/keys/' + id, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteKey: (id: number) => apiFetch('/api/admin/keys/' + id, { method: 'DELETE' }),
   testKey: (id: number, payload: Record<string, unknown>) => apiFetch('/api/admin/keys/' + id + '/test', { method: 'POST', body: JSON.stringify(payload) }),

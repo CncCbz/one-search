@@ -44,8 +44,7 @@
         </div>
 
         <div style="display:flex;align-items:center;margin-top:14px">
-          <span class="muted" style="font-size:12px">超时 {{ card.timeout_ms }} ms · 缓存 {{ card.default_cache_enabled ?
-            card.cache_ttl_seconds + ' 秒' : '关闭' }}</span>
+          <span class="muted" style="font-size:12px">超时 {{ card.timeout_ms }} ms</span>
         </div>
       </el-card>
     </div>
@@ -150,6 +149,9 @@
                           <span v-if="row.provider_name === 'exa' && row.exa_service_key_hint">x-api-key {{ row.exa_service_key_hint }}</span>
                         </div>
                       </div>
+                      <el-tooltip content="复制密钥" placement="top">
+                        <el-button link class="row-icon-button" :icon="CopyDocument" :loading="copyingKeyId === row.id" aria-label="复制密钥" @click="copyKey(row)" />
+                      </el-tooltip>
                       <el-tooltip content="测试密钥" placement="top">
                         <el-button link class="row-icon-button" type="primary" :icon="Refresh" :loading="testingKeyId === row.id" aria-label="测试密钥" @click="testKey(row)" />
                       </el-tooltip>
@@ -188,20 +190,20 @@
                 <div class="advanced-form billing-form">
                   <div class="advanced-field">
                     <div class="advanced-field-label">单价 / 请求 USD</div>
-                    <el-input-number v-model="providerPricePerRequest" :min="0" :step="0.0001" :precision="6" controls-position="right" />
+                    <el-input-number v-model="providerPricePerRequest" :min="0" :step="0.001" :controls="true" controls-position="right" />
                   </div>
                   <div class="advanced-field">
                     <div class="advanced-field-label">单价 / Credit USD</div>
-                    <el-input-number v-model="providerPricePerCredit" :min="0" :step="0.0001" :precision="6" controls-position="right" />
+                    <el-input-number v-model="providerPricePerCredit" :min="0" :step="0.001" controls-position="right" />
                   </div>
                   <div class="advanced-field">
                     <div class="advanced-field-label">单价 / Token USD</div>
-                    <el-input-number v-model="providerPricePerToken" :min="0" :step="0.00000001" :precision="10" controls-position="right" />
+                    <el-input-number v-model="providerPricePerToken" :min="0" :step="0.00000001" controls-position="right" />
                   </div>
                   <div class="advanced-field">
                     <div class="advanced-field-label">默认计费 Credits</div>
                     <el-tooltip content="上游未返回 usage 时，一次成功搜索默认记多少 credits；0 表示不补 credits" placement="top">
-                      <el-input-number v-model="providerDefaultBillableCredits" :min="0" :step="1" :precision="2" controls-position="right" />
+                      <el-input-number v-model="providerDefaultBillableCredits" :min="0" :step="1" controls-position="right" />
                     </el-tooltip>
                   </div>
                 </div>
@@ -253,25 +255,12 @@
                 </div>
                 <div class="advanced-field advanced-field-wide">
                   <div class="advanced-field-label">Key 路由策略</div>
-                  <el-select v-model="providerKeyRoutingStrategy">
-                    <el-option value="" label="权重优先轮询" />
+                  <el-select v-model="providerKeyRoutingStrategy" placeholder="选择策略">
+                    <el-option value="round_robin" label="权重优先轮询" />
                     <el-option value="least_used" label="最少使用优先" />
                     <el-option value="random" label="随机" />
                     <el-option value="weighted_random" label="按权重随机" />
                   </el-select>
-                </div>
-                <div class="advanced-field">
-                  <div class="advanced-field-label">启用缓存</div>
-                  <el-switch v-model="providerForm.default_cache_enabled" />
-                </div>
-                <div class="advanced-field">
-                  <div class="advanced-field-label">缓存时长</div>
-                  <el-input-number
-                    v-model="providerForm.cache_ttl_seconds"
-                    :min="0"
-                    controls-position="right"
-                    :disabled="!providerForm.default_cache_enabled"
-                  />
                 </div>
               </div>
             </el-tab-pane>
@@ -340,6 +329,7 @@ const draftKey = ref('')
 const draftExaServiceKey = ref('')
 const testingKeyId = ref<number | null>(null)
 const quotaLoadingKeyId = ref<number | null>(null)
+const copyingKeyId = ref<number | null>(null)
 const activeTab = ref<'keys' | 'billing' | 'runtime' | 'advanced'>('keys')
 
 const providerCards = computed<ProviderCard[]>(() => providers.value.map((provider) => {
@@ -394,11 +384,13 @@ const providerRetryErrorTypes = computed<string[]>({
 const providerKeyRoutingStrategy = computed<string>({
   get() {
     const value = providerForm.value?.settings?.key_routing_strategy
-    return typeof value === 'string' ? value : ''
+    // empty / unknown = backend default weighted round-robin
+    if (typeof value !== 'string' || !value || value === 'weighted' || value === 'default') return 'round_robin'
+    return value
   },
   set(value: string) {
     if (!providerForm.value) return
-    providerForm.value.settings = { ...(providerForm.value.settings || {}), key_routing_strategy: value }
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), key_routing_strategy: value || 'round_robin' }
   }
 })
 const providerProxyEnabled = computed<boolean>({
@@ -559,6 +551,24 @@ async function copyText(text: string) {
   if (!text) return
   await navigator.clipboard.writeText(text)
   ElMessage.success('已复制')
+}
+
+async function copyKey(row: EditableKey) {
+  if (!row.id) return
+  copyingKeyId.value = row.id
+  try {
+    const secret = await api.revealKey(row.id)
+    if (!secret.key) {
+      ElMessage.warning('未找到可复制的密钥')
+      return
+    }
+    await navigator.clipboard.writeText(secret.key)
+    ElMessage.success('密钥已复制')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '复制失败')
+  } finally {
+    copyingKeyId.value = null
+  }
 }
 
 async function load() {
@@ -875,7 +885,7 @@ onMounted(load)
 }
 .api-key-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, 28px);
+  grid-template-columns: minmax(0, 1fr) repeat(5, 28px);
   align-items: start;
   column-gap: 2px;
   width: 100%;
