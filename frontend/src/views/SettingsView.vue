@@ -66,6 +66,24 @@
         </div>
       </el-card>
 
+      <el-card class="soft-card settings-section" shadow="never">
+        <template #header>搜索缓存</template>
+        <div class="settings-items">
+          <div class="settings-item">
+            <span>启用缓存</span>
+            <el-switch v-model="settings.cache_enabled" />
+          </div>
+          <div class="settings-item">
+            <span>缓存 TTL(秒)</span>
+            <el-input-number v-model="settings.cache_ttl_seconds" :min="0" controls-position="right" :disabled="!settings.cache_enabled" />
+          </div>
+          <div class="settings-item">
+            <span>最大缓存结果数</span>
+            <el-input-number v-model="settings.cache_max_results" :min="0" controls-position="right" :disabled="!settings.cache_enabled" />
+          </div>
+        </div>
+      </el-card>
+
       <el-card class="soft-card settings-section settings-section-wide" shadow="never">
         <template #header>管理员 API Key</template>
         <div class="admin-key-card">

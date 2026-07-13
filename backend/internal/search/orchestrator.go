@@ -81,8 +81,9 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 	defer cancel()
 
 	cacheKey := o.cacheKey(req, providerLimits)
-	cacheEnabled := settings.CacheEnabled && req.Cache != model.CachePolicyBypass && req.Cache != model.CachePolicyRefresh
-	if cacheEnabled {
+	cacheRead := settings.CacheEnabled && req.Cache != model.CachePolicyBypass && req.Cache != model.CachePolicyRefresh
+	cacheWrite := settings.CacheEnabled && req.Cache != model.CachePolicyBypass
+	if cacheRead {
 		if payload, hit, err := o.store.GetCache(ctx, cacheKey); err != nil {
 			return model.SearchResponse{}, err
 		} else if hit {
@@ -165,8 +166,10 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 		ResponseJSON: responseJSON,
 		Calls:        callLogs(providerResults),
 	})
-	if status == "success" && cacheEnabled {
-		if payload, err := json.Marshal(response); err == nil {
+	if status == "success" && cacheWrite {
+		if settings.CacheMaxResults > 0 && len(response.Results) > settings.CacheMaxResults {
+			// skip oversized responses
+		} else if payload, err := json.Marshal(response); err == nil {
 			_ = o.store.SetCache(context.Background(), cacheKey, payload, settings.CacheTTLSeconds)
 		}
 	}
@@ -770,14 +773,26 @@ func stringListSetting(settings map[string]interface{}, key string) []string {
 }
 
 func (o *Orchestrator) cacheKey(req model.SearchRequest, providerLimits map[string]int) string {
+	providers := append([]string(nil), req.Providers...)
+	sort.Strings(providers)
+	limits := map[string]int{}
+	for _, name := range providers {
+		if limit, ok := providerLimits[name]; ok {
+			limits[name] = limit
+		}
+	}
+	var dedupe interface{}
+	if req.Dedupe != nil {
+		dedupe = *req.Dedupe
+	}
 	payload, _ := json.Marshal(map[string]interface{}{
 		"query":           req.Query,
-		"providers":       req.Providers,
-		"provider_limits": providerLimits,
+		"providers":       providers,
+		"provider_limits": limits,
 		"mode":            req.Mode,
 		"limit":           req.Limit,
 		"freshness":       req.Freshness,
-		"dedupe":          req.Dedupe,
+		"dedupe":          dedupe,
 		"rerank":          req.Rerank,
 		"compat":          req.CompatFormat,
 		"options":         req.Options,

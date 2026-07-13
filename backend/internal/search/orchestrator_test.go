@@ -13,6 +13,7 @@ import (
 type orchestratorTestStore struct {
 	settings  model.RuntimeSettings
 	providers []model.ProviderConfig
+	cache     map[string][]byte
 }
 
 func (s *orchestratorTestStore) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, error) {
@@ -40,10 +41,21 @@ func (s *orchestratorTestStore) RecordSearchLog(ctx context.Context, input model
 }
 
 func (s *orchestratorTestStore) GetCache(ctx context.Context, cacheKey string) ([]byte, bool, error) {
-	return nil, false, nil
+	if s.cache == nil {
+		return nil, false, nil
+	}
+	payload, ok := s.cache[cacheKey]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]byte(nil), payload...), true, nil
 }
 
 func (s *orchestratorTestStore) SetCache(ctx context.Context, cacheKey string, payload []byte, ttlSeconds int) error {
+	if s.cache == nil {
+		s.cache = map[string][]byte{}
+	}
+	s.cache[cacheKey] = append([]byte(nil), payload...)
 	return nil
 }
 
@@ -131,6 +143,87 @@ func TestApplyDefaultsDoesNotCapLimitAtFifty(t *testing.T) {
 	request := applyDefaults(model.SearchRequest{Query: "golang", Limit: 120}, model.RuntimeSettings{DefaultLimit: 10, DefaultDedupe: true})
 	if got, want := request.Limit, 120; got != want {
 		t.Fatalf("Limit = %d, want %d", got, want)
+	}
+}
+
+func TestSearchCacheHitAndRefresh(t *testing.T) {
+	keyPool := &orchestratorTestKeyPool{}
+	registry := provider.NewRegistry(orchestratorTestProvider{name: model.ProviderSerper})
+	store := &orchestratorTestStore{
+		settings: model.RuntimeSettings{
+			DefaultMode:      model.SearchModeSingle,
+			DefaultProviders: []string{model.ProviderSerper},
+			DefaultLimit:     10,
+			DefaultDedupe:    true,
+			RequestTimeoutMS: 1000,
+			CacheEnabled:     true,
+			CacheTTLSeconds:  60,
+		},
+		providers: []model.ProviderConfig{
+			{Name: model.ProviderSerper, Enabled: true, Priority: 1, Weight: 1},
+		},
+		cache: map[string][]byte{},
+	}
+	orchestrator := NewOrchestrator(registry, keyPool, store)
+	req := model.SearchRequest{Query: "golang", Providers: []string{model.ProviderSerper}, ProvidersExplicit: true, Mode: model.SearchModeSingle}
+
+	first, err := orchestrator.Search(context.Background(), req, "req-1", 0)
+	if err != nil {
+		t.Fatalf("first search: %v", err)
+	}
+	if first.Meta.CacheHit {
+		t.Fatal("first search should miss cache")
+	}
+	if len(store.cache) != 1 {
+		t.Fatalf("cache entries = %d, want 1", len(store.cache))
+	}
+	acquiredAfterWrite := len(keyPool.acquired)
+
+	second, err := orchestrator.Search(context.Background(), req, "req-2", 0)
+	if err != nil {
+		t.Fatalf("second search: %v", err)
+	}
+	if !second.Meta.CacheHit {
+		t.Fatal("second search should hit cache")
+	}
+	if len(keyPool.acquired) != acquiredAfterWrite {
+		t.Fatalf("cache hit should not acquire keys, acquired=%v", keyPool.acquired)
+	}
+
+	// provider order must not affect key
+	reordered := req
+	reordered.Providers = []string{model.ProviderSerper}
+	third, err := orchestrator.Search(context.Background(), reordered, "req-3", 0)
+	if err != nil {
+		t.Fatalf("reordered search: %v", err)
+	}
+	if !third.Meta.CacheHit {
+		t.Fatal("reordered providers should still hit cache")
+	}
+
+	refresh := req
+	refresh.Cache = model.CachePolicyRefresh
+	fourth, err := orchestrator.Search(context.Background(), refresh, "req-4", 0)
+	if err != nil {
+		t.Fatalf("refresh search: %v", err)
+	}
+	if fourth.Meta.CacheHit {
+		t.Fatal("refresh should bypass read")
+	}
+	if len(keyPool.acquired) <= acquiredAfterWrite {
+		t.Fatal("refresh should call providers")
+	}
+	if len(store.cache) != 1 {
+		t.Fatalf("refresh should rewrite cache, entries=%d", len(store.cache))
+	}
+}
+
+func TestCacheKeyStableAcrossProviderOrder(t *testing.T) {
+	o := &Orchestrator{}
+	left := o.cacheKey(model.SearchRequest{Query: "q", Providers: []string{"b", "a"}, Mode: model.SearchModeParallel, Limit: 10}, map[string]int{"a": 5, "b": 8, "c": 9})
+	right := o.cacheKey(model.SearchRequest{Query: "q", Providers: []string{"a", "b"}, Mode: model.SearchModeParallel, Limit: 10}, map[string]int{"a": 5, "b": 8, "c": 9})
+	if left != right {
+		t.Fatalf("cache keys differ: %s vs %s", left, right)
 	}
 }
 
