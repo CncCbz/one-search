@@ -276,9 +276,10 @@ func queryFirecrawlQuota(ctx context.Context, key model.APIKey, proxyURL string)
 const serperDefaultCredits = 2500
 
 func querySerperQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQuotaResult, error) {
+	// 只用本地 credits meter，不用 requests 次数冒充 credits。
 	used := key.MonthlyCredits
-	if used <= 0 {
-		used = float64(key.MonthlyUsed)
+	if used < 0 {
+		used = 0
 	}
 	balance := float64(serperDefaultCredits) - used
 	return model.ProviderKeyQuotaResult{
@@ -289,7 +290,7 @@ func querySerperQuota(ctx context.Context, key model.APIKey) (model.ProviderKeyQ
 		Unit:          "credits",
 		Balance:       floatPtr(balance),
 		TotalQuantity: floatPtr(used),
-		Message:       "Serper 未公开独立余额接口；按默认总额度 2500 credits 减本地累计 credits 估算剩余额度",
+		Message:       "Serper 未公开独立余额接口；按默认总额度 2500 credits 减本地累计 credits 估算剩余额度（非官方余额）",
 		Breakdown:     quotaBreakdown("default", map[string]interface{}{"credits": serperDefaultCredits}, "local", map[string]interface{}{"monthly_credits": key.MonthlyCredits, "monthly_requests": key.MonthlyUsed}),
 		FetchedAt:     time.Now(),
 	}, nil

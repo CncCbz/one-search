@@ -96,29 +96,29 @@
       <section class="bottom-grid">
         <div class="card chart-card">
           <div class="sec-hd">
-            <h3>用量成本</h3>
+            <h3>成本估算</h3>
             <span class="muted">{{ rangeMeta.label }}</span>
           </div>
           <div ref="costRef" class="chart cost" />
         </div>
         <div class="card bill-card">
           <div class="sec-hd">
-            <h3>账单明细</h3>
-            <span class="muted">USD</span>
+            <h3>成本估算</h3>
+            <span class="muted">公开价目表 · {{ rangeMeta.label }}</span>
           </div>
           <div class="bill-list">
-            <div v-for="item in billing.units" :key="`${item.provider_name}-${item.unit}`" class="bill-row">
+            <div v-for="item in billedUnits" :key="`${item.provider_name}-${item.unit}`" class="bill-row">
               <div>
                 <strong>{{ providerLabel(item.provider_name) }}</strong>
                 <small>{{ usageUnitLabel(item.unit) }} · {{ formatNumber(item.quantity_total) }}</small>
               </div>
               <b>{{ formatCurrency(item.cost_usd_total) }}</b>
             </div>
-            <div v-if="!billing.units.length" class="empty-health muted">暂无账单数据</div>
+            <div v-if="!billedUnits.length" class="empty-health muted">暂无可估算成本（仅成功调用 + 公开单价）</div>
             <div v-else class="bill-row total">
               <div>
                 <strong>合计</strong>
-                <small>{{ rangeMeta.label }}</small>
+                <small>估算 USD，非官方账单</small>
               </div>
               <b>{{ formatCurrency(billingTotal) }}</b>
             </div>
@@ -237,7 +237,8 @@ const metrics = computed(() => [
   { key: 'latency', label: '平均延迟', value: `${(usage.value.average_latency_ms || 0).toFixed(1)}ms` }
 ])
 
-const billingTotal = computed(() => billing.value.units.reduce((sum, item) => sum + (item.cost_usd_total || 0), 0))
+const billedUnits = computed(() => (billing.value.units || []).filter((item) => (item.cost_usd_total || 0) > 0))
+const billingTotal = computed(() => billedUnits.value.reduce((sum, item) => sum + (item.cost_usd_total || 0), 0))
 
 const HEALTH_SEGMENTS = 30
 const HEALTH_SEGMENT_MINUTES = 1440
@@ -527,8 +528,14 @@ function renderCharts() {
     }]
   }, true)
 
-  const costLabels = billing.value.units.map((item) => providerLabel(item.provider_name))
-  const costValues = billing.value.units.map((item) => Number((item.cost_usd_total || 0).toFixed(4)))
+  // 仅展示有 USD 成本的行；同 provider 多 unit 合并，避免重复柱。
+  const costMap = new Map<string, number>()
+  for (const item of billedUnits.value) {
+    const name = providerLabel(item.provider_name)
+    costMap.set(name, (costMap.get(name) || 0) + (item.cost_usd_total || 0))
+  }
+  const costLabels = [...costMap.keys()]
+  const costValues = [...costMap.values()].map((v) => Number(v.toFixed(4)))
   costChart = ensureChart(costRef.value, costChart)
   costChart?.setOption({
     grid: { left: 48, right: 12, top: 16, bottom: 28 },

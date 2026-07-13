@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/one-search/one-search/backend/internal/billing"
 	"github.com/one-search/one-search/backend/internal/model"
 	"github.com/one-search/one-search/backend/internal/security"
 )
@@ -21,6 +22,25 @@ type Store struct {
 
 func NewStore(pool *pgxpool.Pool, crypto *security.Crypto) *Store {
 	return &Store{pool: pool, crypto: crypto}
+}
+
+func (s *Store) providerSettingsMap(ctx context.Context, providerName string) (map[string]interface{}, error) {
+	var settingsBytes []byte
+	err := s.pool.QueryRow(ctx, `SELECT settings FROM providers WHERE name=$1`, providerName).Scan(&settingsBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return map[string]interface{}{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]interface{}{}
+	if len(settingsBytes) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(settingsBytes, &out); err != nil {
+		return map[string]interface{}{}, nil
+	}
+	return out, nil
 }
 
 func (s *Store) AdminExists(ctx context.Context, username string) (bool, error) {
@@ -701,7 +721,7 @@ func (s *Store) RecordSearchLog(ctx context.Context, input model.SearchLogInput)
 		if err != nil {
 			return err
 		}
-		if err := insertCallUsage(ctx, tx, searchRequestID, input, providerCallID, call); err != nil {
+		if err := s.insertCallUsage(ctx, tx, searchRequestID, input, providerCallID, call); err != nil {
 			return err
 		}
 	}
@@ -711,8 +731,35 @@ func (s *Store) RecordSearchLog(ctx context.Context, input model.SearchLogInput)
 	return tx.Commit(ctx)
 }
 
-func insertCallUsage(ctx context.Context, tx pgx.Tx, searchRequestID int64, input model.SearchLogInput, providerCallID int64, call model.ProviderCallLog) error {
-	measurements := append([]model.UsageMeasurement{{Unit: "requests", Quantity: 1}}, call.Usage...)
+func (s *Store) insertCallUsage(ctx context.Context, tx pgx.Tx, searchRequestID int64, input model.SearchLogInput, providerCallID int64, call model.ProviderCallLog) error {
+	// 仅成功 call 进入账单 meter；失败/重试 attempt 不虚高用量。
+	if !strings.EqualFold(strings.TrimSpace(call.Status), "success") {
+		return nil
+	}
+	settings, err := s.providerSettingsMap(ctx, call.ProviderName)
+	if err != nil {
+		return err
+	}
+	rate := billing.RateFromSettings(call.ProviderName, settings)
+	measurements := append([]model.UsageMeasurement{}, call.Usage...)
+	if len(measurements) == 0 {
+		if credits := billing.DefaultRequestCreditsWithRate(rate); credits > 0 {
+			measurements = append(measurements, model.UsageMeasurement{Unit: "credits", Quantity: credits})
+		}
+		measurements = append(measurements, model.UsageMeasurement{Unit: "requests", Quantity: 1})
+	} else {
+		hasRequestLike := false
+		for _, m := range measurements {
+			u := strings.ToLower(strings.TrimSpace(m.Unit))
+			if u == "requests" || u == "request" || u == "calls" || u == "call" || u == "credits" || u == "tokens" || u == "usd" {
+				hasRequestLike = true
+				break
+			}
+		}
+		if !hasRequestLike {
+			measurements = append(measurements, model.UsageMeasurement{Unit: "requests", Quantity: 1})
+		}
+	}
 	var apiToken interface{}
 	if input.APITokenID > 0 {
 		apiToken = input.APITokenID
@@ -730,19 +777,23 @@ func insertCallUsage(ctx context.Context, tx pgx.Tx, searchRequestID int64, inpu
 		if metadata == nil {
 			metadata = map[string]interface{}{}
 		}
+		var costUSD interface{}
+		costTotal := 0.0
+		if measurement.CostUSD != nil && *measurement.CostUSD != 0 {
+			costUSD = *measurement.CostUSD
+			costTotal = *measurement.CostUSD
+		} else if unit == "usd" {
+			costTotal = measurement.Quantity
+			costUSD = measurement.Quantity
+		} else if estimated, ok := billing.EstimateCostUSDWithRate(rate, unit, measurement.Quantity); ok {
+			costTotal = estimated
+			costUSD = estimated
+			metadata["estimated"] = true
+			metadata["pricing"] = "provider_settings_or_default"
+		}
 		metadataJSON, err := json.Marshal(metadata)
 		if err != nil {
 			return err
-		}
-		var costUSD interface{}
-		costTotal := 0.0
-		if measurement.CostUSD != nil {
-			costUSD = *measurement.CostUSD
-			costTotal = *measurement.CostUSD
-		}
-		if unit == "usd" && costTotal == 0 {
-			costTotal = measurement.Quantity
-			costUSD = measurement.Quantity
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO provider_call_usage (provider_call_id, search_request_id, request_id, api_token_id, provider_key_id, provider_name, unit, quantity, cost_usd, metadata)
@@ -961,17 +1012,34 @@ func (s *Store) BillingSummary(ctx context.Context, days int) (model.BillingSumm
 	if days <= 0 || days > 366 {
 		days = 30
 	}
+	// 兼容旧接口：按日历天。dashboard 请用 BillingSummarySince。
+	from := time.Now().AddDate(0, 0, -(days - 1))
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, from.Location())
+	summary, err := s.BillingSummarySince(ctx, from)
+	if err != nil {
+		return summary, err
+	}
+	summary.Days = days
+	return summary, nil
+}
+
+// BillingSummarySince aggregates billable usage from provider_call_usage since `from` (rolling window).
+func (s *Store) BillingSummarySince(ctx context.Context, from time.Time) (model.BillingSummary, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT provider_name, unit, COALESCE(SUM(quantity_total),0)::float8, COALESCE(SUM(cost_usd_total),0)::float8
-		FROM usage_meter_daily
-		WHERE usage_date >= CURRENT_DATE - ($1::int - 1)
+		SELECT provider_name, unit, COALESCE(SUM(quantity),0)::float8, COALESCE(SUM(cost_usd),0)::float8
+		FROM provider_call_usage
+		WHERE created_at >= $1
 		GROUP BY provider_name, unit
 		ORDER BY provider_name ASC, unit ASC
-	`, days)
+	`, from.UTC())
 	if err != nil {
 		return model.BillingSummary{}, err
 	}
 	defer rows.Close()
+	days := int(time.Since(from).Hours()/24) + 1
+	if days < 1 {
+		days = 1
+	}
 	summary := model.BillingSummary{Days: days, Units: []model.UsageUnitSummary{}}
 	for rows.Next() {
 		var item model.UsageUnitSummary

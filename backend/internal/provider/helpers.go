@@ -246,10 +246,8 @@ func usageMeasurements(providerName string, payload map[string]interface{}) []mo
 	if tokens := usageNumber(payload, "total_tokens", "tokens", "token_count", "usage.total_tokens", "usage.tokens"); tokens > 0 {
 		measurements = append(measurements, model.UsageMeasurement{Unit: "tokens", Quantity: tokens, Metadata: metadata})
 	}
+	// 仅把明确的 USD 字段当美元；泛化 cost 可能是 credits，避免假账单。
 	cost := usageNumber(payload, "cost_usd", "total_cost_usd", "usage.cost_usd", "usage.total_cost_usd")
-	if cost == 0 {
-		cost = usageNumber(payload, "cost", "total_cost", "usage.cost", "usage.total_cost")
-	}
 	if cost > 0 {
 		measurements = append(measurements, model.UsageMeasurement{Unit: "usd", Quantity: cost, CostUSD: float64Pointer(cost), Metadata: metadata})
 	}

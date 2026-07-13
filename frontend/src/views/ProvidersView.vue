@@ -50,115 +50,181 @@
       </el-card>
     </div>
 
-    <el-dialog v-model="dialogVisible" width="760px" top="3vh" :title="dialogTitle" destroy-on-close
-      class="provider-dialog channel-style-dialog">
+    <el-dialog
+      v-model="dialogVisible"
+      width="860px"
+      top="3vh"
+      destroy-on-close
+      class="provider-dialog channel-style-dialog provider-tabs-dialog"
+      :show-close="true"
+    >
+      <template #header>
+        <div v-if="providerForm" class="dlg-ident">
+          <div class="dlg-logo">{{ providerShortName(providerForm.display_name || providerForm.name) }}</div>
+          <div class="dlg-ident-main">
+            <div class="dlg-title">{{ dialogTitle }}</div>
+            <div class="dlg-sub muted">provider · {{ providerForm.name }}</div>
+            <div class="dlg-badges">
+              <span class="dlg-badge" :class="providerForm.enabled ? 'ok' : 'mute'">{{ providerForm.enabled ? '已启用' : '已停用' }}</span>
+              <span class="dlg-badge">{{ selectedKeys.filter((item) => item.status === 'enabled').length }} / {{ selectedKeys.length }} 密钥可用</span>
+              <span class="dlg-badge warn">估算 {{ formatCurrency(providerPricePerRequest) }} / req</span>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <template v-if="providerForm">
         <div class="channel-dialog-body">
-          <section class="channel-section">
-            <div class="section-line-header">
-              <div>基础 URL</div>
-              <el-tooltip content="复制基础 URL" placement="top">
-                <el-button link :icon="CopyDocument" aria-label="复制基础 URL" @click="copyText(providerForm.base_url)" />
-              </el-tooltip>
-            </div>
-            <el-input v-model="providerForm.base_url" class="base-url-input" placeholder="https://example.com" />
-          </section>
+          <el-tabs v-model="activeTab" class="provider-tabs">
+            <el-tab-pane label="密钥" name="keys">
+              <section class="channel-section">
+                <div class="section-line-header">
+                  <div>基础 URL</div>
+                  <el-tooltip content="复制基础 URL" placement="top">
+                    <el-button link :icon="CopyDocument" aria-label="复制基础 URL" @click="copyText(providerForm.base_url)" />
+                  </el-tooltip>
+                </div>
+                <el-input v-model="providerForm.base_url" class="base-url-input" placeholder="https://example.com" />
+              </section>
 
-          <section class="channel-section">
-            <div class="section-line-header">
-              <div>API 密钥 ({{ selectedKeys.length }})</div>
-              <el-tooltip content="添加密钥" placement="top">
-                <el-button link :icon="Plus" :disabled="creatingRow" aria-label="添加密钥" @click="startCreateKey" />
-              </el-tooltip>
-            </div>
-            <div class="api-key-list">
-              <div v-for="row in tableKeys" :key="row.isNew ? 'new-key' : row.id" class="api-key-row"
-                :class="{ 'is-new': row.isNew }">
-                <template v-if="row.isNew">
-                  <div class="new-key-fields">
-                    <el-input v-model="draftKey" class="key-input" type="password" show-password
-                      placeholder="API Key" />
-                    <el-input v-if="providerForm?.name === 'exa'" v-model="draftExaServiceKey" class="key-input"
-                      type="password" show-password placeholder="Exa x-api-key / 管理密钥" />
+              <section class="channel-section">
+                <div class="status-summary">
+                  <div class="summary-card">
+                    <span class="summary-label">已启用密钥</span>
+                    <strong>{{ selectedKeys.filter((item) => item.status === 'enabled').length }}</strong>
                   </div>
-                  <div class="new-key-actions">
-                    <el-tooltip content="保存密钥" placement="top">
-                      <el-button link type="primary" :icon="Check" :loading="creatingKey" aria-label="保存密钥"
-                        @click="createKey" />
-                    </el-tooltip>
-                    <el-tooltip content="取消添加" placement="top">
-                      <el-button link :icon="Close" aria-label="取消添加" @click="cancelCreateKey" />
-                    </el-tooltip>
+                  <div class="summary-card">
+                    <span class="summary-label">总调用</span>
+                    <strong>{{ selectedKeys.reduce((sum, item) => sum + item.total_successes + item.total_failures, 0) }}</strong>
                   </div>
-                </template>
-                <template v-else>
-                  <div class="key-main">
-                    <el-input class="key-input" :model-value="row.key_hint || '已保存密钥'" readonly />
-                    <div class="key-meta">
-                      <span>成功 {{ row.total_successes }}</span>
-                      <span>失败 {{ row.total_failures }}</span>
-                      <span>成功率 {{ successRate(row) }}%</span>
-                      <span :class="quotaMetaClass(row)">{{ quotaMetaText(row) }}</span>
-                      <el-tooltip v-if="row.status !== 'enabled'" :content="keyDisabledReason(row)" placement="top">
-                        <span class="key-status-reason" aria-label="停用原因"><el-icon>
-                            <WarnTriangleFilled />
-                          </el-icon></span>
+                  <div class="summary-card">
+                    <span class="summary-label">失败次数</span>
+                    <strong>{{ selectedKeys.reduce((sum, item) => sum + item.total_failures, 0) }}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section class="channel-section compact-bottom">
+                <div class="section-line-header">
+                  <div>API 密钥 ({{ selectedKeys.length }})</div>
+                  <el-tooltip content="添加密钥" placement="top">
+                    <el-button link :icon="Plus" :disabled="creatingRow" aria-label="添加密钥" @click="startCreateKey" />
+                  </el-tooltip>
+                </div>
+                <div class="api-key-list">
+                  <div v-for="row in tableKeys" :key="row.isNew ? 'new-key' : row.id" class="api-key-row" :class="{ 'is-new': row.isNew }">
+                    <template v-if="row.isNew">
+                      <div class="new-key-fields">
+                        <el-input v-model="draftKey" class="key-input" type="password" show-password placeholder="API Key" />
+                        <el-input
+                          v-if="providerForm?.name === 'exa'"
+                          v-model="draftExaServiceKey"
+                          class="key-input"
+                          type="password"
+                          show-password
+                          placeholder="Exa x-api-key / 管理密钥"
+                        />
+                      </div>
+                      <div class="new-key-actions">
+                        <el-tooltip content="保存密钥" placement="top">
+                          <el-button link type="primary" :icon="Check" :loading="creatingKey" aria-label="保存密钥" @click="createKey" />
+                        </el-tooltip>
+                        <el-tooltip content="取消添加" placement="top">
+                          <el-button link :icon="Close" aria-label="取消添加" @click="cancelCreateKey" />
+                        </el-tooltip>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="key-main">
+                        <el-input class="key-input" :model-value="row.key_hint || '已保存密钥'" readonly />
+                        <div class="key-meta">
+                          <span>成功 {{ row.total_successes }}</span>
+                          <span>失败 {{ row.total_failures }}</span>
+                          <span>成功率 {{ successRate(row) }}%</span>
+                          <span :class="quotaMetaClass(row)">{{ quotaMetaText(row) }}</span>
+                          <el-tooltip v-if="row.status !== 'enabled'" :content="keyDisabledReason(row)" placement="top">
+                            <span class="key-status-reason" aria-label="停用原因">
+                              <el-icon><WarnTriangleFilled /></el-icon>
+                            </span>
+                          </el-tooltip>
+                          <span v-if="row.provider_name === 'exa' && row.exa_service_key_hint">x-api-key {{ row.exa_service_key_hint }}</span>
+                        </div>
+                      </div>
+                      <el-tooltip content="测试密钥" placement="top">
+                        <el-button link class="row-icon-button" type="primary" :icon="Refresh" :loading="testingKeyId === row.id" aria-label="测试密钥" @click="testKey(row)" />
                       </el-tooltip>
-                      <span v-if="row.provider_name === 'exa' && row.exa_service_key_hint">x-api-key {{
-                        row.exa_service_key_hint }}</span>
-                    </div>
+                      <el-tooltip content="查询官方额度" placement="top">
+                        <el-button link class="row-icon-button" :icon="Clock" :loading="quotaLoadingKeyId === row.id" aria-label="查询官方额度" @click="queryQuota(row)" />
+                      </el-tooltip>
+                      <el-tooltip :content="row.status === 'enabled' ? '停用密钥' : '启用密钥'" placement="top">
+                        <el-button
+                          link
+                          class="row-icon-button"
+                          :type="row.status === 'enabled' ? 'warning' : 'success'"
+                          :icon="row.status === 'enabled' ? Remove : CircleCheck"
+                          :aria-label="row.status === 'enabled' ? '停用密钥' : '启用密钥'"
+                          @click="setKeyStatus(row, row.status !== 'enabled')"
+                        />
+                      </el-tooltip>
+                      <el-tooltip content="删除密钥" placement="top">
+                        <el-button link class="row-icon-button" type="danger" :icon="Delete" aria-label="删除密钥" @click="removeKey(row.id)" />
+                      </el-tooltip>
+                    </template>
                   </div>
-                  <el-tooltip content="测试密钥" placement="top">
-                    <el-button link class="row-icon-button" type="primary" :icon="Refresh"
-                      :loading="testingKeyId === row.id" aria-label="测试密钥" @click="testKey(row)" />
-                  </el-tooltip>
-                  <el-tooltip content="查询官方额度" placement="top">
-                    <el-button link class="row-icon-button" :icon="Clock" :loading="quotaLoadingKeyId === row.id"
-                      aria-label="查询官方额度" @click="queryQuota(row)" />
-                  </el-tooltip>
-                  <el-tooltip :content="row.status === 'enabled' ? '停用密钥' : '启用密钥'" placement="top">
-                    <el-button link class="row-icon-button" :type="row.status === 'enabled' ? 'warning' : 'success'"
-                      :icon="row.status === 'enabled' ? Remove : CircleCheck"
-                      :aria-label="row.status === 'enabled' ? '停用密钥' : '启用密钥'"
-                      @click="setKeyStatus(row, row.status !== 'enabled')" />
-                  </el-tooltip>
-                  <el-tooltip content="删除密钥" placement="top">
-                    <el-button link class="row-icon-button" type="danger" :icon="Delete" aria-label="删除密钥"
-                      @click="removeKey(row.id)" />
-                  </el-tooltip>
-                </template>
-              </div>
-              <div v-if="tableKeys.length === 0" class="empty-key-row">暂无密钥，点击右侧“添加”创建</div>
-            </div>
-          </section>
+                  <div v-if="tableKeys.length === 0" class="empty-key-row">暂无密钥，点击右侧“添加”创建</div>
+                </div>
+              </section>
+            </el-tab-pane>
 
-          <section class="channel-section">
-            <div class="section-line-header">
-              <div>运行状态</div>
-            </div>
-            <div class="status-summary">
-              <div class="summary-card">
-                <span class="summary-label">已启用密钥</span>
-                <strong>{{selectedKeys.filter((item) => item.status === 'enabled').length}}</strong>
+            <el-tab-pane label="计费" name="billing">
+              <section class="price-card">
+                <div class="price-card-hd">
+                  <div>
+                    <h3>成本估算单价</h3>
+                    <p>仅用于仪表盘成本估算，不是官方账单。0 表示回退内置公开价目表。</p>
+                  </div>
+                  <span class="dlg-badge warn">非官方账单</span>
+                </div>
+                <div class="advanced-form billing-form">
+                  <div class="advanced-field">
+                    <div class="advanced-field-label">单价 / 请求 USD</div>
+                    <el-input-number v-model="providerPricePerRequest" :min="0" :step="0.0001" :precision="6" controls-position="right" />
+                  </div>
+                  <div class="advanced-field">
+                    <div class="advanced-field-label">单价 / Credit USD</div>
+                    <el-input-number v-model="providerPricePerCredit" :min="0" :step="0.0001" :precision="6" controls-position="right" />
+                  </div>
+                  <div class="advanced-field">
+                    <div class="advanced-field-label">单价 / Token USD</div>
+                    <el-input-number v-model="providerPricePerToken" :min="0" :step="0.00000001" :precision="10" controls-position="right" />
+                  </div>
+                  <div class="advanced-field">
+                    <div class="advanced-field-label">默认计费 Credits</div>
+                    <el-tooltip content="上游未返回 usage 时，一次成功搜索默认记多少 credits；0 表示不补 credits" placement="top">
+                      <el-input-number v-model="providerDefaultBillableCredits" :min="0" :step="1" :precision="2" controls-position="right" />
+                    </el-tooltip>
+                  </div>
+                </div>
+              </section>
+              <div class="price-sample-grid">
+                <div class="summary-card sample-card">
+                  <span class="summary-label">估算样例</span>
+                  <strong>{{ formatCurrency(providerPricePerRequest * 100) }}</strong>
+                  <small class="muted">100 次成功请求 × 当前单价</small>
+                </div>
+                <div class="summary-card sample-card">
+                  <span class="summary-label">生效范围</span>
+                  <div class="sample-tags">
+                    <span class="dlg-badge">仅新请求</span>
+                    <span class="dlg-badge">成功 call 才计</span>
+                    <span class="dlg-badge">可随时改</span>
+                  </div>
+                </div>
               </div>
-              <div class="summary-card">
-                <span class="summary-label">总调用</span>
-                <strong>{{selectedKeys.reduce((sum, item) => sum + item.total_successes + item.total_failures, 0)
-                  }}</strong>
-              </div>
-              <div class="summary-card">
-                <span class="summary-label">失败次数</span>
-                <strong>{{selectedKeys.reduce((sum, item) => sum + item.total_failures, 0)}}</strong>
-              </div>
-            </div>
-          </section>
+            </el-tab-pane>
 
-          <el-collapse v-model="advancedOpen" class="advanced-collapse">
-            <el-collapse-item name="advanced">
-              <template #title>
-                <span class="advanced-title">高级设置</span>
-              </template>
-              <div class="advanced-form">
+            <el-tab-pane label="运行" name="runtime">
+              <div class="advanced-form runtime-form">
                 <div class="advanced-field">
                   <div class="advanced-field-label">优先级</div>
                   <el-input-number v-model="providerForm.priority" :min="1" controls-position="right" />
@@ -194,6 +260,24 @@
                     <el-option value="weighted_random" label="按权重随机" />
                   </el-select>
                 </div>
+                <div class="advanced-field">
+                  <div class="advanced-field-label">启用缓存</div>
+                  <el-switch v-model="providerForm.default_cache_enabled" />
+                </div>
+                <div class="advanced-field">
+                  <div class="advanced-field-label">缓存时长</div>
+                  <el-input-number
+                    v-model="providerForm.cache_ttl_seconds"
+                    :min="0"
+                    controls-position="right"
+                    :disabled="!providerForm.default_cache_enabled"
+                  />
+                </div>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="高级" name="advanced">
+              <div class="advanced-form advanced-only-form">
                 <div class="advanced-field advanced-field-wide">
                   <div class="advanced-field-label">可重试错误</div>
                   <el-select v-model="providerRetryErrorTypes" multiple collapse-tags collapse-tags-tooltip>
@@ -205,15 +289,6 @@
                   </el-select>
                 </div>
                 <div class="advanced-field">
-                  <div class="advanced-field-label">启用缓存</div>
-                  <el-switch v-model="providerForm.default_cache_enabled" />
-                </div>
-                <div class="advanced-field">
-                  <div class="advanced-field-label">缓存时长</div>
-                  <el-input-number v-model="providerForm.cache_ttl_seconds" :min="0" controls-position="right"
-                    :disabled="!providerForm.default_cache_enabled" />
-                </div>
-                <div class="advanced-field">
                   <div class="advanced-field-label">使用代理</div>
                   <el-switch v-model="providerProxyEnabled" />
                 </div>
@@ -222,14 +297,18 @@
                   <el-input v-model="providerProxyURL" :disabled="!providerProxyEnabled" placeholder="http://127.0.0.1:7897" />
                 </div>
               </div>
-            </el-collapse-item>
-          </el-collapse>
+            </el-tab-pane>
+          </el-tabs>
         </div>
       </template>
+
       <template #footer>
         <div class="dialog-action-bar">
-          <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="savingProvider" @click="saveProvider">保存</el-button>
+          <span class="footer-hint muted">保存后立即影响新请求的路由与成本估算</span>
+          <div class="footer-actions">
+            <el-button @click="dialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="savingProvider" @click="saveProvider">保存</el-button>
+          </div>
         </div>
       </template>
     </el-dialog>
@@ -261,7 +340,7 @@ const draftKey = ref('')
 const draftExaServiceKey = ref('')
 const testingKeyId = ref<number | null>(null)
 const quotaLoadingKeyId = ref<number | null>(null)
-const advancedOpen = ref<string[]>([])
+const activeTab = ref<'keys' | 'billing' | 'runtime' | 'advanced'>('keys')
 
 const providerCards = computed<ProviderCard[]>(() => providers.value.map((provider) => {
   const ownedKeys = keys.value.filter((item) => item.provider_name === provider.name)
@@ -331,6 +410,25 @@ const providerProxyEnabled = computed<boolean>({
     providerForm.value.settings = { ...(providerForm.value.settings || {}), proxy_enabled: value }
   }
 })
+
+const DEFAULT_PROVIDER_PRICING: Record<string, { price_per_request: number; price_per_credit: number; price_per_token: number; default_billable_credits: number }> = {
+  exa: { price_per_request: 0.007, price_per_credit: 0, price_per_token: 0, default_billable_credits: 0 },
+  you: { price_per_request: 0.005, price_per_credit: 0, price_per_token: 0, default_billable_credits: 0 },
+  tavily: { price_per_request: 0.008, price_per_credit: 0.008, price_per_token: 0, default_billable_credits: 1 },
+  serper: { price_per_request: 0.001, price_per_credit: 0.001, price_per_token: 0, default_billable_credits: 1 },
+  brave: { price_per_request: 0.005, price_per_credit: 0, price_per_token: 0, default_billable_credits: 0 },
+  firecrawl: { price_per_request: 0.00166, price_per_credit: 0.00083, price_per_token: 0, default_billable_credits: 2 },
+  jina: { price_per_request: 0.0005, price_per_credit: 0, price_per_token: 0.00000005, default_billable_credits: 0 }
+}
+
+function defaultPricingFor(name: string) {
+  return DEFAULT_PROVIDER_PRICING[name] || { price_per_request: 0, price_per_credit: 0, price_per_token: 0, default_billable_credits: 0 }
+}
+
+function numberSetting(settings: Record<string, unknown> | undefined, key: string, fallback = 0) {
+  const value = settings?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
 const providerProxyURL = computed<string>({
   get() {
     const value = providerForm.value?.settings?.proxy_url
@@ -339,6 +437,46 @@ const providerProxyURL = computed<string>({
   set(value: string) {
     if (!providerForm.value) return
     providerForm.value.settings = { ...(providerForm.value.settings || {}), proxy_url: value.trim() }
+  }
+})
+const providerPricePerRequest = computed<number>({
+  get() {
+    const defaults = defaultPricingFor(providerForm.value?.name || '')
+    return numberSetting(providerForm.value?.settings, 'price_per_request', defaults.price_per_request)
+  },
+  set(value: number) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), price_per_request: Math.max(0, Number(value) || 0) }
+  }
+})
+const providerPricePerCredit = computed<number>({
+  get() {
+    const defaults = defaultPricingFor(providerForm.value?.name || '')
+    return numberSetting(providerForm.value?.settings, 'price_per_credit', defaults.price_per_credit)
+  },
+  set(value: number) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), price_per_credit: Math.max(0, Number(value) || 0) }
+  }
+})
+const providerPricePerToken = computed<number>({
+  get() {
+    const defaults = defaultPricingFor(providerForm.value?.name || '')
+    return numberSetting(providerForm.value?.settings, 'price_per_token', defaults.price_per_token)
+  },
+  set(value: number) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), price_per_token: Math.max(0, Number(value) || 0) }
+  }
+})
+const providerDefaultBillableCredits = computed<number>({
+  get() {
+    const defaults = defaultPricingFor(providerForm.value?.name || '')
+    return numberSetting(providerForm.value?.settings, 'default_billable_credits', defaults.default_billable_credits)
+  },
+  set(value: number) {
+    if (!providerForm.value) return
+    providerForm.value.settings = { ...(providerForm.value.settings || {}), default_billable_credits: Math.max(0, Number(value) || 0) }
   }
 })
 
@@ -437,12 +575,24 @@ async function load() {
 
 function openProvider(provider: ProviderConfig) {
   const next = JSON.parse(JSON.stringify(provider))
-  next.settings = { ...(next.settings || {}), request_result_limit: Number(next.settings?.request_result_limit || 10), key_retry_count: Number(next.settings?.key_retry_count ?? 3), max_concurrency: normalizeMaxConcurrency(next.settings?.max_concurrency), proxy_enabled: Boolean(next.settings?.proxy_enabled), proxy_url: typeof next.settings?.proxy_url === 'string' ? next.settings.proxy_url : '' }
+  const pricing = defaultPricingFor(next.name)
+  next.settings = {
+    ...(next.settings || {}),
+    request_result_limit: Number(next.settings?.request_result_limit || 10),
+    key_retry_count: Number(next.settings?.key_retry_count ?? 3),
+    max_concurrency: normalizeMaxConcurrency(next.settings?.max_concurrency),
+    proxy_enabled: Boolean(next.settings?.proxy_enabled),
+    proxy_url: typeof next.settings?.proxy_url === 'string' ? next.settings.proxy_url : '',
+    price_per_request: numberSetting(next.settings, 'price_per_request', pricing.price_per_request),
+    price_per_credit: numberSetting(next.settings, 'price_per_credit', pricing.price_per_credit),
+    price_per_token: numberSetting(next.settings, 'price_per_token', pricing.price_per_token),
+    default_billable_credits: numberSetting(next.settings, 'default_billable_credits', pricing.default_billable_credits)
+  }
   providerForm.value = next
   creatingRow.value = false
   draftKey.value = ''
   draftExaServiceKey.value = ''
-  advancedOpen.value = []
+  activeTab.value = 'keys'
   dialogVisible.value = true
 }
 
@@ -562,103 +712,206 @@ onMounted(load)
 </script>
 
 <style scoped>
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.provider-card {
+  cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+}
+.provider-card:hover {
+  border-color: #d7dde5;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
+  transform: translateY(-1px);
+}
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.provider-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  background: linear-gradient(145deg, var(--primary), #14966a);
+  flex: 0 0 auto;
+}
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.metric-pill {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fafbfc;
+  min-width: 0;
+}
+.metric-pill .label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.metric-pill .value {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.dlg-ident {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding-right: 28px;
+}
+.dlg-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  background: linear-gradient(145deg, var(--primary), #14966a);
+  flex: 0 0 auto;
+}
+.dlg-ident-main { min-width: 0; }
+.dlg-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.dlg-sub { font-size: 12px; margin-top: 2px; }
+.dlg-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.dlg-badge {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  background: #f2f4f7;
+  color: #475467;
+}
+.dlg-badge.ok {
+  background: #ecfdf3;
+  color: #067647;
+}
+.dlg-badge.warn {
+  background: #fffaeb;
+  color: #b54708;
+}
+.dlg-badge.mute {
+  background: #f2f4f7;
+  color: #667085;
+}
+
 .channel-dialog-body {
   box-sizing: border-box;
   overflow: visible;
   padding: 0 2px 2px;
+  min-height: 420px;
+}
+.provider-tabs :deep(.el-tabs__header) {
+  margin: 0 0 14px;
+}
+.provider-tabs :deep(.el-tabs__item) {
+  font-weight: 700;
+}
+.provider-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--primary);
+}
+.provider-tabs :deep(.el-tabs__active-bar) {
+  background: var(--primary);
+}
+.provider-tabs :deep(.el-tabs__ink-bar) {
+  background: var(--primary);
+}
+.provider-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background: var(--border);
 }
 
-.channel-section {
-  margin-bottom: 22px;
-}
-
+.channel-section { margin-bottom: 18px; }
+.channel-section.compact-bottom { margin-bottom: 4px; }
 .section-line-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
   color: var(--text);
 }
-
-.section-line-header :deep(.el-button) {
-  margin-left: 0;
-}
-
 .base-url-input :deep(.el-input__wrapper),
 .key-input :deep(.el-input__wrapper) {
-  height: 44px;
+  height: 42px;
 }
-
 .api-key-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 260px;
+  max-height: 280px;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
   overscroll-behavior: contain;
 }
-
 .api-key-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, 26px);
+  grid-template-columns: minmax(0, 1fr) repeat(4, 28px);
   align-items: start;
-  column-gap: 0;
+  column-gap: 2px;
   width: 100%;
   min-width: 0;
-  overflow: visible;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 10px 10px 12px;
+  background: #fff;
 }
-
 .api-key-row.is-new {
   grid-template-columns: minmax(0, 1fr) auto;
+  border-style: dashed;
+  background: #fcfcfd;
 }
-
 .new-key-fields {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
 }
-
-.api-key-row>* {
-  min-width: 0;
-}
-
+.api-key-row > * { min-width: 0; }
 .api-key-row .row-icon-button {
   justify-self: center;
   align-self: start;
-  width: 26px;
-  height: 44px;
+  width: 28px;
+  height: 42px;
   padding: 0;
   margin-left: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-
 .key-main {
   min-width: 0;
   overflow: hidden;
 }
-
-.key-icon-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.key-icon-actions :deep(.el-button) {
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  margin-left: 0;
-  font-size: 16px;
-}
-
 .key-status-reason {
   display: inline-flex;
   align-items: center;
@@ -666,45 +919,33 @@ onMounted(load)
   font-size: 14px;
   line-height: 1;
 }
-
 .key-meta {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 5px;
+  margin-top: 6px;
   padding-left: 2px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1;
   flex-wrap: wrap;
 }
-
-.key-meta span {
-  white-space: nowrap;
-}
-
-.quota-meta.is-success {
-  color: var(--primary);
-}
-
+.key-meta span { white-space: nowrap; }
+.quota-meta.is-success { color: var(--primary); }
 .quota-meta.is-muted,
-.quota-meta.is-danger {
-  color: var(--danger);
-}
-
+.quota-meta.is-danger { color: var(--danger); }
 .new-key-actions {
   display: flex;
   justify-content: flex-end;
   gap: 4px;
+  align-self: center;
 }
-
 .new-key-actions :deep(.el-button) {
   width: 28px;
   height: 28px;
   padding: 0;
   margin-left: 0;
 }
-
 .empty-key-row {
   height: 44px;
   display: flex;
@@ -712,66 +953,85 @@ onMounted(load)
   justify-content: center;
   color: var(--muted);
   border: 1px dashed var(--border);
-  border-radius: var(--el-border-radius-base);
+  border-radius: 12px;
   background: #fff;
 }
-
 .status-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
-
 .summary-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  background: #fff;
+  background: #fafbfc;
   border: 1px solid var(--border);
-  border-radius: var(--el-border-radius-base);
+  border-radius: 12px;
 }
-
-.summary-label {
-  color: var(--muted);
-}
-
+.summary-label { color: var(--muted); font-size: 12px; }
 .summary-card strong {
   color: var(--text);
+  font-size: 18px;
+  letter-spacing: -0.02em;
 }
-
-.advanced-collapse {
-  margin-bottom: 22px;
-  border: 1px solid var(--border);
-  border-radius: var(--el-border-radius-base);
-  background: #fff;
-  overflow: hidden;
+.sample-card {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 96px;
 }
-
-.advanced-collapse :deep(.el-collapse-item__header) {
-  height: 48px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
+.sample-card small { font-size: 12px; }
+.sample-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.price-card {
+  border: 1px solid #d7ebe2;
+  background: linear-gradient(180deg, #f5fbf8, #fff);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.price-card-hd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.price-card h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
   font-weight: 800;
 }
-
-.advanced-collapse :deep(.el-collapse-item__content) {
-  padding: 0;
+.price-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
-
-.advanced-collapse :deep(.el-collapse-item__wrap) {
-  border-bottom: 0;
+.price-sample-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
-
-.advanced-title {
-  color: var(--text);
-}
-
 .advanced-form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
 }
-
+.billing-form,
+.runtime-form,
+.advanced-only-form {
+  margin-top: 0;
+}
 .advanced-field {
   display: flex;
   align-items: center;
@@ -779,82 +1039,52 @@ onMounted(load)
   gap: 10px;
   min-width: 0;
   min-height: 56px;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
-
-.advanced-field:nth-child(3n) {
+.advanced-field:nth-child(2n) { border-right: 0; }
+.advanced-field-wide {
+  grid-column: 1 / -1;
   border-right: 0;
 }
-
-.advanced-field:nth-last-child(-n + 3) {
-  border-bottom: 0;
-}
-
 .advanced-field-label {
   color: var(--text);
   font-weight: 700;
   line-height: 1.4;
   white-space: nowrap;
 }
-
 .advanced-field :deep(.el-input-number) {
-  width: 112px;
+  width: 140px;
   flex-shrink: 0;
 }
-
 .advanced-field :deep(.el-select) {
-  flex: 1;
-  min-width: 180px;
+  width: min(100%, 280px);
 }
-
-.advanced-field-wide {
-  grid-column: span 2;
+.advanced-field :deep(.el-input) {
+  width: min(100%, 360px);
 }
-
-.advanced-field :deep(.el-switch) {
-  flex-shrink: 0;
-}
-
 .dialog-action-bar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   width: 100%;
 }
+.footer-hint { font-size: 12px; }
+.footer-actions { display: flex; gap: 8px; }
 
-.dialog-action-bar :deep(.el-button) {
-  margin-left: 0;
-}
-
-:deep(.channel-style-dialog .el-dialog) {
-  background: #fbfaf8;
-}
-
-:deep(.provider-dialog .el-dialog__header) {
-  padding: 20px 26px 8px;
-  margin-right: 0;
-}
-
-:deep(.provider-dialog .el-dialog__title) {
-  font-size: 24px;
-  font-weight: 900;
-  color: var(--text);
-}
-
-:deep(.provider-dialog .el-dialog__headerbtn) {
-  top: 20px;
-  right: 24px;
-  font-size: 22px;
-}
-
-:deep(.provider-dialog .el-dialog__body) {
-  padding: 18px 26px 8px;
-  overflow: visible;
-}
-
-:deep(.provider-dialog .el-dialog__footer) {
-  padding: 10px 26px 24px;
+@media (max-width: 720px) {
+  .metric-row,
+  .status-summary,
+  .price-sample-grid,
+  .advanced-form {
+    grid-template-columns: 1fr;
+  }
+  .advanced-field,
+  .advanced-field:nth-child(2n) {
+    border-right: 0;
+  }
 }
 </style>
+

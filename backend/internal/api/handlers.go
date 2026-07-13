@@ -43,6 +43,7 @@ type AppStore interface {
 	UsageSummary(ctx context.Context) (model.UsageSummary, error)
 	UsageSummarySince(ctx context.Context, from time.Time) (model.UsageSummary, error)
 	BillingSummary(ctx context.Context, days int) (model.BillingSummary, error)
+	BillingSummarySince(ctx context.Context, from time.Time) (model.BillingSummary, error)
 	ProviderHealth(ctx context.Context, windowMinutes int) ([]model.ProviderHealth, error)
 	UsageSeries(ctx context.Context, days int) (model.UsageSeries, error)
 	UsageSeriesSince(ctx context.Context, from time.Time, granularity string) (model.UsageSeries, error)
@@ -471,7 +472,7 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		healthWindow = 15
 	}
 	health, _ := h.store.ProviderHealth(r.Context(), healthWindow)
-	billing, _ := h.store.BillingSummary(r.Context(), spec.BillingDays)
+	billing, _ := h.store.BillingSummarySince(r.Context(), from)
 	usageSeries, _ := h.store.UsageSeriesSince(r.Context(), from, spec.Granularity)
 	usageSeries.Range = spec.Range
 	providerSeries, err := h.store.ProviderUsageSeriesSince(r.Context(), from)
