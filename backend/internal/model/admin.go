@@ -213,6 +213,58 @@ type GatewayMetrics struct {
 	Billing        BillingSummary   `json:"billing"`
 }
 
+// UsageSeriesPoint is one bucket of gateway-level usage for dashboard charts.
+type UsageSeriesPoint struct {
+	Date            string  `json:"date"`
+	RequestsTotal   int64   `json:"requests_total"`
+	RequestsSuccess int64   `json:"requests_success"`
+	RequestsFailed  int64   `json:"requests_failed"`
+	CacheHits       int64   `json:"cache_hits"`
+	ResultsTotal    int64   `json:"results_total"`
+	AverageLatency  float64 `json:"average_latency_ms"`
+}
+
+type UsageSeries struct {
+	Range       string             `json:"range"`
+	Granularity string             `json:"granularity"` // hour | day
+	Days        int                `json:"days"`
+	Points      []UsageSeriesPoint `json:"points"`
+}
+
+type DashboardRangeMeta struct {
+	Range          string `json:"range"`
+	Label          string `json:"label"`
+	Granularity    string `json:"granularity"`
+	SegmentMinutes int    `json:"segment_minutes"`
+	Segments       int    `json:"segments"`
+	BillingDays    int    `json:"billing_days"`
+}
+
+type ProviderUsagePoint struct {
+	ProviderName  string `json:"provider_name"`
+	DisplayName   string `json:"display_name"`
+	RequestsTotal int64  `json:"requests_total"`
+}
+
+type HealthSegmentPoint struct {
+	Status   string `json:"status"` // ok | degraded | down | off
+	Success  int64  `json:"success"`
+	Failed   int64  `json:"failed"`
+	Total    int64  `json:"total"`
+}
+
+type HealthSegmentSeries struct {
+	ProviderName   string               `json:"provider_name"`
+	DisplayName    string               `json:"display_name"`
+	Status         string               `json:"status"`
+	AvailableKeys  int                  `json:"available_keys"`
+	TotalKeys      int                  `json:"total_keys"`
+	SuccessRate    float64              `json:"success_rate"`
+	UptimePercent  float64              `json:"uptime_percent"`
+	Segments       []HealthSegmentPoint `json:"segments"`
+	SegmentMinutes int                  `json:"segment_minutes"`
+}
+
 type AuditLog struct {
 	ID           int64                  `json:"id"`
 	RequestID    string                 `json:"request_id"`

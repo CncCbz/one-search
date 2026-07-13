@@ -47,6 +47,59 @@ export interface GatewayMetrics {
   billing: BillingSummary
 }
 
+export interface UsageSeriesPoint {
+  date: string
+  requests_total: number
+  requests_success: number
+  requests_failed: number
+  cache_hits: number
+  results_total: number
+  average_latency_ms: number
+}
+
+export interface UsageSeries {
+  range?: string
+  granularity?: 'hour' | 'day' | string
+  days: number
+  points: UsageSeriesPoint[]
+}
+
+export type DashboardRangeKey = '24h' | 'today' | '7d' | '14d' | '30d'
+
+export interface DashboardRangeMeta {
+  range: DashboardRangeKey | string
+  label: string
+  granularity: 'hour' | 'day' | string
+  segment_minutes: number
+  segments: number
+  billing_days: number
+}
+
+export interface ProviderUsagePoint {
+  provider_name: string
+  display_name: string
+  requests_total: number
+}
+
+export interface HealthSegmentPoint {
+  status: 'ok' | 'degraded' | 'down' | 'off' | string
+  success: number
+  failed: number
+  total: number
+}
+
+export interface HealthSegmentSeries {
+  provider_name: string
+  display_name: string
+  status: string
+  available_keys: number
+  total_keys: number
+  success_rate: number
+  uptime_percent: number
+  segments: HealthSegmentPoint[]
+  segment_minutes: number
+}
+
 export interface AuditLog {
   id: number
   request_id: string
@@ -223,7 +276,16 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 export const api = {
   login: (username: string, password: string) => apiFetch<{ token: string; expires_at: string }>('/api/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => apiFetch('/api/admin/logout', { method: 'POST' }),
-  dashboard: () => apiFetch<{ usage: UsageSummary; providers: ProviderConfig[]; provider_health?: ProviderHealth[]; billing?: BillingSummary }>('/api/admin/dashboard'),
+  dashboard: (range: DashboardRangeKey | string = '14d') => apiFetch<{
+    range?: DashboardRangeMeta
+    usage: UsageSummary
+    providers: ProviderConfig[]
+    provider_health?: ProviderHealth[]
+    billing?: BillingSummary
+    usage_series?: UsageSeries
+    provider_series?: ProviderUsagePoint[]
+    health_series?: HealthSegmentSeries[]
+  }>(`/api/admin/dashboard?range=${encodeURIComponent(range)}`),
   providers: () => apiFetch<{ providers: ProviderConfig[] }>('/api/admin/providers'),
   updateProvider: (provider: ProviderConfig) => apiFetch('/api/admin/providers/' + provider.name, { method: 'PATCH', body: JSON.stringify(provider) }),
   keys: () => apiFetch<{ keys: ProviderKey[] }>('/api/admin/keys'),
@@ -240,7 +302,7 @@ export const api = {
   updateSettings: (payload: RuntimeSettings) => apiFetch<RuntimeSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   adminAPIKey: () => apiFetch<AdminAPIKey>('/api/admin/settings/admin-api-key'),
   rotateAdminAPIKey: () => apiFetch<AdminAPIKey>('/api/admin/settings/admin-api-key', { method: 'POST' }),
-  logs: () => apiFetch<{ logs: SearchLog[] }>('/api/admin/logs?limit=100'),
+  logs: (limit = 100) => apiFetch<{ logs: SearchLog[] }>(`/api/admin/logs?limit=${Math.max(1, Math.min(limit, 500))}`),
   logDetail: (id: number) => apiFetch<{ log: SearchLog; calls: ProviderCallLog[] }>('/api/admin/logs/' + id),
   usageSummary: () => apiFetch<UsageSummary>('/api/admin/usage/summary'),
   billingSummary: (days = 30) => apiFetch<BillingSummary>(`/api/admin/usage/billing?days=${days}`),

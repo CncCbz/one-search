@@ -934,6 +934,29 @@ func (s *Store) UsageSummary(ctx context.Context) (model.UsageSummary, error) {
 	return summary, nil
 }
 
+// UsageSummarySince reads gateway-level metrics from search_requests for a time range.
+func (s *Store) UsageSummarySince(ctx context.Context, from time.Time) (model.UsageSummary, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::bigint,
+		       COUNT(*) FILTER (WHERE status='success')::bigint,
+		       COUNT(*) FILTER (WHERE status='error')::bigint,
+		       COUNT(*) FILTER (WHERE cache_hit)::bigint,
+		       COALESCE(SUM(result_count),0)::bigint,
+		       COALESCE(SUM(latency_ms),0)::bigint
+		FROM search_requests
+		WHERE created_at >= $1
+	`, from)
+	var summary model.UsageSummary
+	var latencyTotal int64
+	if err := row.Scan(&summary.RequestsTotal, &summary.RequestsSuccess, &summary.RequestsFailed, &summary.CacheHits, &summary.ResultsTotal, &latencyTotal); err != nil {
+		return summary, err
+	}
+	if summary.RequestsTotal > 0 {
+		summary.AverageLatency = float64(latencyTotal) / float64(summary.RequestsTotal)
+	}
+	return summary, nil
+}
+
 func (s *Store) BillingSummary(ctx context.Context, days int) (model.BillingSummary, error) {
 	if days <= 0 || days > 366 {
 		days = 30
@@ -1047,6 +1070,297 @@ func providerHealthStatus(item model.ProviderHealth) string {
 		return "degraded"
 	}
 	return "healthy"
+}
+
+func (s *Store) UsageSeries(ctx context.Context, days int) (model.UsageSeries, error) {
+	if days <= 0 || days > 90 {
+		days = 14
+	}
+	from := time.Now().AddDate(0, 0, -(days - 1))
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, from.Location())
+	series, err := s.UsageSeriesSince(ctx, from, "day")
+	if err != nil {
+		return series, err
+	}
+	series.Days = days
+	return series, nil
+}
+
+func (s *Store) UsageSeriesSince(ctx context.Context, from time.Time, granularity string) (model.UsageSeries, error) {
+	granularity = strings.ToLower(strings.TrimSpace(granularity))
+	if granularity != "hour" {
+		granularity = "day"
+	}
+	trunc := "day"
+	layout := "2006-01-02"
+	step := 24 * time.Hour
+	if granularity == "hour" {
+		trunc = "hour"
+		layout = "2006-01-02 15:00"
+		step = time.Hour
+		from = from.Truncate(time.Hour)
+	} else {
+		from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, from.Location())
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT to_char(date_trunc($2, created_at), CASE WHEN $2='hour' THEN 'YYYY-MM-DD HH24:00' ELSE 'YYYY-MM-DD' END) AS bucket,
+		       COUNT(*)::bigint,
+		       COUNT(*) FILTER (WHERE status='success')::bigint,
+		       COUNT(*) FILTER (WHERE status='error')::bigint,
+		       COUNT(*) FILTER (WHERE cache_hit)::bigint,
+		       COALESCE(SUM(result_count),0)::bigint,
+		       COALESCE(SUM(latency_ms),0)::bigint
+		FROM search_requests
+		WHERE created_at >= $1
+		GROUP BY 1
+		ORDER BY 1 ASC
+	`, from, trunc)
+	if err != nil {
+		return model.UsageSeries{}, err
+	}
+	defer rows.Close()
+
+	byBucket := map[string]model.UsageSeriesPoint{}
+	for rows.Next() {
+		var point model.UsageSeriesPoint
+		var latencyTotal int64
+		if err := rows.Scan(&point.Date, &point.RequestsTotal, &point.RequestsSuccess, &point.RequestsFailed, &point.CacheHits, &point.ResultsTotal, &latencyTotal); err != nil {
+			return model.UsageSeries{}, err
+		}
+		if point.RequestsTotal > 0 {
+			point.AverageLatency = float64(latencyTotal) / float64(point.RequestsTotal)
+		}
+		byBucket[point.Date] = point
+	}
+	if err := rows.Err(); err != nil {
+		return model.UsageSeries{}, err
+	}
+
+	now := time.Now().In(from.Location())
+	end := now
+	if granularity == "day" {
+		end = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	} else {
+		end = now.Truncate(time.Hour)
+	}
+	points := []model.UsageSeriesPoint{}
+	for t := from; !t.After(end); t = t.Add(step) {
+		key := t.Format(layout)
+		if point, ok := byBucket[key]; ok {
+			points = append(points, point)
+			continue
+		}
+		points = append(points, model.UsageSeriesPoint{Date: key})
+	}
+	days := int(end.Sub(from).Hours()/24) + 1
+	if days < 1 {
+		days = 1
+	}
+	return model.UsageSeries{Granularity: granularity, Days: days, Points: points}, nil
+}
+
+func (s *Store) ProviderUsageSeries(ctx context.Context, days int) ([]model.ProviderUsagePoint, error) {
+	if days <= 0 || days > 90 {
+		days = 14
+	}
+	from := time.Now().AddDate(0, 0, -(days - 1))
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, from.Location())
+	return s.ProviderUsageSeriesSince(ctx, from)
+}
+
+func (s *Store) ProviderUsageSeriesSince(ctx context.Context, from time.Time) ([]model.ProviderUsagePoint, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.name, p.display_name, COALESCE(c.cnt, 0)::bigint
+		FROM providers p
+		LEFT JOIN (
+			SELECT provider_name, COUNT(*)::bigint AS cnt
+			FROM provider_calls
+			WHERE created_at >= $1
+			GROUP BY provider_name
+		) c ON c.provider_name = p.name
+		ORDER BY COALESCE(c.cnt, 0) DESC, p.priority ASC, p.name ASC
+	`, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []model.ProviderUsagePoint{}
+	for rows.Next() {
+		var item model.ProviderUsagePoint
+		if err := rows.Scan(&item.ProviderName, &item.DisplayName, &item.RequestsTotal); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func emptyHealthSegments(n int) []model.HealthSegmentPoint {
+	segs := make([]model.HealthSegmentPoint, n)
+	for i := range segs {
+		segs[i] = model.HealthSegmentPoint{Status: "off"}
+	}
+	return segs
+}
+
+func (s *Store) ProviderHealthSeries(ctx context.Context, segmentMinutes, segments int) ([]model.HealthSegmentSeries, error) {
+	// segmentMinutes = 每格时长；segments = 格数。允许跨多天粗粒度分桶。
+	if segmentMinutes <= 0 {
+		segmentMinutes = 15
+	}
+	if segmentMinutes > 24*60 {
+		segmentMinutes = 24 * 60
+	}
+	if segments <= 0 {
+		segments = 90
+	}
+	if segments > 240 {
+		segments = 240
+	}
+
+	// 配置/密钥信息只用于展示，不参与颜色判定。
+	health, err := s.ProviderHealth(ctx, 15)
+	if err != nil {
+		return []model.HealthSegmentSeries{}, err
+	}
+
+	lookbackMinutes := segmentMinutes * segments
+	from := time.Now().Add(-time.Duration(lookbackMinutes) * time.Minute)
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT provider_name,
+		       LEAST($2::int - 1, GREATEST(0,
+		         FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / ($1::float8 * 60.0))::int
+		       )) AS bucket,
+		       COUNT(*) FILTER (WHERE status = 'success')::bigint AS success_cnt,
+		       COUNT(*) FILTER (WHERE status = 'error')::bigint AS failed_cnt
+		FROM provider_calls
+		WHERE created_at >= $3
+		GROUP BY provider_name, bucket
+	`, segmentMinutes, segments, from)
+	if err != nil {
+		fallback := make([]model.HealthSegmentSeries, 0, len(health))
+		for _, item := range health {
+			status := "idle"
+			if item.Status == "disabled" || item.Status == "no_keys" {
+				status = item.Status
+			}
+			fallback = append(fallback, model.HealthSegmentSeries{
+				ProviderName:   item.ProviderName,
+				DisplayName:    item.DisplayName,
+				Status:         status,
+				AvailableKeys:  item.AvailableKeys,
+				TotalKeys:      item.TotalKeys,
+				Segments:       emptyHealthSegments(segments),
+				SegmentMinutes: segmentMinutes,
+			})
+		}
+		return fallback, nil
+	}
+	defer rows.Close()
+
+	type bucketStat struct {
+		success int64
+		failed  int64
+	}
+	stats := map[string]map[int]bucketStat{}
+	for rows.Next() {
+		var provider string
+		var bucket int
+		var success, failed int64
+		if err := rows.Scan(&provider, &bucket, &success, &failed); err != nil {
+			return nil, err
+		}
+		if stats[provider] == nil {
+			stats[provider] = map[int]bucketStat{}
+		}
+		stats[provider][bucket] = bucketStat{success: success, failed: failed}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	items := make([]model.HealthSegmentSeries, 0, len(health))
+	for _, item := range health {
+		seg := model.HealthSegmentSeries{
+			ProviderName:   item.ProviderName,
+			DisplayName:    item.DisplayName,
+			AvailableKeys:  item.AvailableKeys,
+			TotalKeys:      item.TotalKeys,
+			Segments:       emptyHealthSegments(segments),
+			SegmentMinutes: segmentMinutes,
+		}
+		providerStats := stats[item.ProviderName]
+		var score float64
+		var scored int
+		var okBuckets, degradedBuckets, downBuckets int
+		var reqSuccess, reqFailed int64
+
+		for i := 0; i < segments; i++ {
+			// left -> right : oldest -> newest
+			bucket := segments - 1 - i
+			st := providerStats[bucket]
+			total := st.success + st.failed
+			if total <= 0 {
+				seg.Segments[i] = model.HealthSegmentPoint{Status: "off"}
+				continue
+			}
+			reqSuccess += st.success
+			reqFailed += st.failed
+			successRate := float64(st.success) / float64(total)
+			status := "ok"
+			switch {
+			case successRate < 0.5:
+				status = "down"
+				downBuckets++
+				score += 0
+			case successRate < 0.9:
+				status = "degraded"
+				degradedBuckets++
+				score += 0.5
+			default:
+				okBuckets++
+				score += 1
+			}
+			seg.Segments[i] = model.HealthSegmentPoint{
+				Status:  status,
+				Success: st.success,
+				Failed:  st.failed,
+				Total:   total,
+			}
+			scored++
+		}
+
+		switch {
+		case item.Status == "disabled":
+			seg.Status = "disabled"
+		case scored == 0 && item.Status == "no_keys":
+			seg.Status = "no_keys"
+		case scored == 0:
+			seg.Status = "idle"
+		case downBuckets > 0 && downBuckets >= degradedBuckets && downBuckets >= okBuckets:
+			seg.Status = "down"
+		case downBuckets > 0 || degradedBuckets > 0:
+			seg.Status = "degraded"
+		default:
+			// 有真实流量时优先展示流量健康，不因当前无密钥配置掩盖历史状态。
+			seg.Status = "healthy"
+		}
+
+		if scored > 0 {
+			seg.UptimePercent = (score / float64(scored)) * 100
+			total := reqSuccess + reqFailed
+			if total > 0 {
+				seg.SuccessRate = float64(reqSuccess) / float64(total)
+			}
+		} else {
+			seg.UptimePercent = 0
+			seg.SuccessRate = 0
+		}
+		items = append(items, seg)
+	}
+	return items, nil
 }
 
 func (s *Store) RecordAuditLog(ctx context.Context, input model.AuditLogInput) error {

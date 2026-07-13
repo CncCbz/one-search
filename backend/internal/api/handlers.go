@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/one-search/one-search/backend/internal/compat"
@@ -40,8 +41,14 @@ type AppStore interface {
 	GetSearchLog(ctx context.Context, id int64) (model.SearchLog, []model.ProviderCallLog, error)
 	GetSearchLogByRequestID(ctx context.Context, requestID string) (model.SearchLog, []model.ProviderCallLog, error)
 	UsageSummary(ctx context.Context) (model.UsageSummary, error)
+	UsageSummarySince(ctx context.Context, from time.Time) (model.UsageSummary, error)
 	BillingSummary(ctx context.Context, days int) (model.BillingSummary, error)
 	ProviderHealth(ctx context.Context, windowMinutes int) ([]model.ProviderHealth, error)
+	UsageSeries(ctx context.Context, days int) (model.UsageSeries, error)
+	UsageSeriesSince(ctx context.Context, from time.Time, granularity string) (model.UsageSeries, error)
+	ProviderUsageSeries(ctx context.Context, days int) ([]model.ProviderUsagePoint, error)
+	ProviderUsageSeriesSince(ctx context.Context, from time.Time) ([]model.ProviderUsagePoint, error)
+	ProviderHealthSeries(ctx context.Context, segmentMinutes, segments int) ([]model.HealthSegmentSeries, error)
 	RecordAuditLog(ctx context.Context, input model.AuditLogInput) error
 	ListAuditLogs(ctx context.Context, limit int) ([]model.AuditLog, error)
 }
@@ -405,13 +412,92 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"username": "admin"})
 }
 
+func dashboardRangeSpec(raw string) model.DashboardRangeMeta {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "24h":
+		// 24 个小时格，贴近 status 页 dense bar
+		return model.DashboardRangeMeta{Range: "24h", Label: "近 24 小时", Granularity: "hour", SegmentMinutes: 60, Segments: 24, BillingDays: 1}
+	case "today":
+		return model.DashboardRangeMeta{Range: "today", Label: "今日", Granularity: "hour", SegmentMinutes: 60, Segments: 0, BillingDays: 1}
+	case "7d":
+		// 7 天 × 每天 1 格
+		return model.DashboardRangeMeta{Range: "7d", Label: "近 7 天", Granularity: "day", SegmentMinutes: 24 * 60, Segments: 7, BillingDays: 7}
+	case "30d":
+		// 30 天日粒度，OpenAI status 风格
+		return model.DashboardRangeMeta{Range: "30d", Label: "近 30 天", Granularity: "day", SegmentMinutes: 24 * 60, Segments: 30, BillingDays: 30}
+	default:
+		return model.DashboardRangeMeta{Range: "14d", Label: "近 14 天", Granularity: "day", SegmentMinutes: 24 * 60, Segments: 14, BillingDays: 14}
+	}
+}
+
+func dashboardRangeFrom(spec model.DashboardRangeMeta, now time.Time) time.Time {
+	loc := now.Location()
+	switch spec.Range {
+	case "24h":
+		return now.Add(-24 * time.Hour)
+	case "today":
+		y, m, d := now.In(loc).Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, loc)
+	case "7d":
+		return now.Add(-7 * 24 * time.Hour)
+	case "30d":
+		return now.Add(-30 * 24 * time.Hour)
+	default: // 14d
+		return now.Add(-14 * 24 * time.Hour)
+	}
+}
+
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
+	spec := dashboardRangeSpec(r.URL.Query().Get("range"))
+	now := time.Now()
+	from := dashboardRangeFrom(spec, now)
+	if spec.Range == "today" {
+		// 今日：从 00:00 到现在，按小时切。
+		hours := int(now.Sub(from).Hours()) + 1
+		if hours < 1 {
+			hours = 1
+		}
+		if hours > 24 {
+			hours = 24
+		}
+		spec.Segments = hours
+	}
+
 	settings, _ := h.store.RuntimeSettings(r.Context())
-	summary, _ := h.store.UsageSummary(r.Context())
+	summary, _ := h.store.UsageSummarySince(r.Context(), from)
 	providers, _ := h.store.ListProviders(r.Context())
-	health, _ := h.store.ProviderHealth(r.Context(), settings.ProviderHealthWindowMinutes)
-	billing, _ := h.store.BillingSummary(r.Context(), 30)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"usage": summary, "providers": providers, "provider_health": health, "billing": billing})
+	healthWindow := settings.ProviderHealthWindowMinutes
+	if healthWindow <= 0 {
+		healthWindow = 15
+	}
+	health, _ := h.store.ProviderHealth(r.Context(), healthWindow)
+	billing, _ := h.store.BillingSummary(r.Context(), spec.BillingDays)
+	usageSeries, _ := h.store.UsageSeriesSince(r.Context(), from, spec.Granularity)
+	usageSeries.Range = spec.Range
+	providerSeries, err := h.store.ProviderUsageSeriesSince(r.Context(), from)
+	if err != nil || providerSeries == nil {
+		providerSeries = []model.ProviderUsagePoint{}
+	}
+	healthSeries, err := h.store.ProviderHealthSeries(r.Context(), spec.SegmentMinutes, spec.Segments)
+	if err != nil || healthSeries == nil {
+		healthSeries = []model.HealthSegmentSeries{}
+	}
+	if providers == nil {
+		providers = []model.ProviderConfig{}
+	}
+	if health == nil {
+		health = []model.ProviderHealth{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"range":           spec,
+		"usage":           summary,
+		"providers":       providers,
+		"provider_health": health,
+		"billing":         billing,
+		"usage_series":    usageSeries,
+		"provider_series": providerSeries,
+		"health_series":   healthSeries,
+	})
 }
 
 func (h *Handler) adminProviders(w http.ResponseWriter, r *http.Request) {
