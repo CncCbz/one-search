@@ -1,10 +1,14 @@
 <template>
   <div class="audit-page">
-    <div class="page-actions">
-      <el-button @click="load">刷新</el-button>
+    <div class="page-hd">
+      <h1>审计日志</h1>
+      <div class="page-actions">
+        <el-button :icon="Refresh" circle title="刷新" :loading="loading" @click="load" />
+      </div>
     </div>
-    <el-card class="soft-card audit-card" shadow="never">
-      <el-table :data="logs" stripe height="100%">
+    <PageSkeleton v-if="loading && !loaded" type="table" :rows="8" class="audit-skeleton" />
+    <el-card v-else class="soft-card audit-card" shadow="never" v-loading="loading">
+      <el-table :data="logs" stripe class="audit-table" height="100%">
         <el-table-column label="时间" width="180">
           <template #default="scope">{{ formatTime(scope.row.created_at) }}</template>
         </el-table-column>
@@ -27,12 +31,22 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { Refresh } from '@element-plus/icons-vue'
+import PageSkeleton from '../components/PageSkeleton.vue'
 import { api, AuditLog } from '../api/client'
 
+const loading = ref(true)
+const loaded = ref(false)
 const logs = ref<AuditLog[]>([])
 
 async function load() {
-  logs.value = (await api.auditLogs()).logs
+  loading.value = true
+  try {
+    logs.value = (await api.auditLogs()).logs
+    loaded.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 function formatTime(value: string) {
@@ -50,9 +64,42 @@ onMounted(load)
 </script>
 
 <style scoped>
-.audit-page { height: calc(100vh - 56px); display: flex; flex-direction: column; overflow: hidden; }
-.audit-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.audit-card :deep(.el-card__body) { flex: 1; min-height: 0; overflow: hidden; }
+.audit-page {
+  height: calc(100dvh - 76px);
+  max-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.audit-page .page-hd {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+.audit-skeleton {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.audit-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.audit-card :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.audit-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
 .muted-id { margin-left: 6px; color: var(--muted); }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: normal; word-break: break-all; }
 </style>

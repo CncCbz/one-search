@@ -1,56 +1,77 @@
 <template>
   <div>
-    <div class="page-actions">
-      <el-button type="primary" @click="openCreate">新增令牌</el-button>
+    <div class="page-hd">
+      <h1>接口令牌</h1>
+      <div class="page-actions">
+        <el-button type="primary" :icon="Plus" circle title="新增令牌" :disabled="loading && !loaded" @click="openCreate" />
+      </div>
     </div>
 
-    <el-alert v-if="rawToken" type="success" show-icon :closable="false" style="margin-bottom:16px">
+    <PageSkeleton v-if="loading && !loaded" type="table" :rows="5" />
+    <template v-else>
+    <el-alert v-if="rawToken" type="success" show-icon :closable="false" class="token-alert">
       <template #title>
-        <span>新令牌只显示一次：</span>
-        <code>{{ rawToken }}</code>
-        <el-button link type="primary" @click="copyText(rawToken)">复制</el-button>
+        <div class="raw-token-row">
+          <span>只显示一次</span>
+          <code>{{ rawToken }}</code>
+          <el-button :icon="CopyDocument" circle size="small" title="复制" @click="copyText(rawToken)" />
+        </div>
       </template>
     </el-alert>
 
-    <el-card class="soft-card" shadow="never">
+    <el-card class="soft-card" shadow="never" v-loading="loading">
       <el-table :data="tokens" stripe>
-        <el-table-column prop="name" label="名称" />
-        <el-table-column label="令牌">
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column label="令牌" min-width="160">
           <template #default="scope">
-            <div class="token-cell">
-              <span>{{ displayToken(scope.row) }}</span>
-              <span class="token-hint">完整令牌仅创建时显示</span>
-            </div>
+            <span class="mono">{{ displayToken(scope.row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="允许渠道" width="220">
+        <el-table-column label="渠道" min-width="140">
           <template #default="scope">
             <div class="provider-tags">
-              <el-tag v-if="scope.row.allowed_providers.length === 0" size="small" type="info">全部渠道</el-tag>
+              <el-tag v-if="scope.row.allowed_providers.length === 0" size="small" type="info">全部</el-tag>
               <el-tag v-for="provider in scope.row.allowed_providers" :key="provider" size="small">{{ providerLabel(provider) }}</el-tag>
             </div>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="90">
           <template #default="scope">
-            <el-tag :type="scope.row.status === 'enabled' ? 'success' : 'info'">{{ scope.row.status === 'enabled' ? '启用' : '停用' }}</el-tag>
+            <el-tag :type="scope.row.status === 'enabled' ? 'success' : 'info'">
+              {{ scope.row.status === 'enabled' ? '启用' : '停用' }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="rate_limit_per_min" label="RPM" width="90" />
-        <el-table-column prop="daily_quota" label="日额度" width="100" />
-        <el-table-column prop="monthly_quota" label="月额度" width="100" />
-        <el-table-column prop="usage_count" label="使用次数" width="100" />
-        <el-table-column label="操作" width="220">
+        <el-table-column prop="rate_limit_per_min" label="RPM" width="80" align="right" />
+        <el-table-column label="额度" min-width="120">
           <template #default="scope">
-            <el-button link type="primary" @click="openEdit(scope.row)">编辑</el-button>
-            <el-button link @click="setStatus(scope.row, scope.row.status === 'enabled' ? 'disabled' : 'enabled')">{{ scope.row.status === 'enabled' ? '停用' : '启用' }}</el-button>
-            <el-button link type="danger" @click="remove(scope.row.id)">删除</el-button>
+            <div class="quota-cell">
+              <span>日 {{ formatQuota(scope.row.daily_quota) }}</span>
+              <small>月 {{ formatQuota(scope.row.monthly_quota) }}</small>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="usage_count" label="使用" width="90" align="right" />
+        <el-table-column label="" width="132" align="right">
+          <template #default="scope">
+            <div class="row-actions">
+              <el-button link :icon="Edit" title="编辑" @click="openEdit(scope.row)" />
+              <el-button
+                link
+                :icon="scope.row.status === 'enabled' ? Remove : CircleCheck"
+                :title="scope.row.status === 'enabled' ? '停用' : '启用'"
+                @click="setStatus(scope.row, scope.row.status === 'enabled' ? 'disabled' : 'enabled')"
+              />
+              <el-button link type="danger" :icon="Delete" title="删除" @click="remove(scope.row.id)" />
+            </div>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialog" :title="editingToken ? '编辑接口令牌' : '新增接口令牌'">
+    </template>
+
+    <el-dialog v-model="dialog" :title="editingToken ? '编辑接口令牌' : '新增接口令牌'" width="520px">
       <el-form label-position="top">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="允许请求渠道">
@@ -73,20 +94,43 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
+import { CircleCheck, CopyDocument, Delete, Edit, Plus, Remove } from '@element-plus/icons-vue'
+import PageSkeleton from '../components/PageSkeleton.vue'
 import { api, ApiToken } from '../api/client'
 import { providerLabel, providerOptions } from '../utils/providers'
+
+const loading = ref(true)
+const loaded = ref(false)
 const tokens = ref<ApiToken[]>([])
 const dialog = ref(false)
 const rawToken = ref('')
 const editingToken = ref<ApiToken | null>(null)
-const form = reactive({ name: '默认客户端', scopes: ['search'], allowed_providers: [] as string[], rate_limit_per_min: 0, daily_quota: 0, monthly_quota: 0 })
+const form = reactive({
+  name: '默认客户端',
+  scopes: ['search'],
+  allowed_providers: [] as string[],
+  rate_limit_per_min: 0,
+  daily_quota: 0,
+  monthly_quota: 0
+})
 
 async function load() {
-  tokens.value = (await api.tokens()).tokens
+  loading.value = true
+  try {
+    tokens.value = (await api.tokens()).tokens
+    loaded.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 function displayToken(token: ApiToken) {
   return token.token ? token.token : `${token.token_prefix}...`
+}
+
+function formatQuota(value: number) {
+  if (!value) return '不限'
+  return new Intl.NumberFormat('en-US').format(value)
 }
 
 function resetForm() {
@@ -148,8 +192,31 @@ onMounted(load)
 </script>
 
 <style scoped>
-.token-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.token-cell span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.token-hint { color: var(--el-text-color-secondary); font-family: inherit !important; font-size: 12px; }
+.token-alert { margin-bottom: 14px; }
+.raw-token-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.raw-token-row code {
+  font-family: var(--mono);
+  word-break: break-all;
+}
 .provider-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.quota-cell {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.quota-cell small {
+  display: block;
+  color: var(--faint);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
 </style>

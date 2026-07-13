@@ -1,10 +1,14 @@
 <template>
   <div>
-    <div class="page-actions">
-      <el-button @click="load">刷新</el-button>
+    <div class="page-hd">
+      <h1>平台管理</h1>
+      <div class="page-actions">
+        <el-button :icon="Refresh" circle title="刷新" :loading="loading" @click="load" />
+      </div>
     </div>
 
-    <div class="provider-grid">
+    <PageSkeleton v-if="loading && !loaded" type="cards" />
+    <div v-else class="provider-grid" v-loading="loading">
       <el-card v-for="card in providerCards" :key="card.name" class="soft-card provider-card" shadow="never"
         @click="openProvider(card)">
         <div class="provider-card-header">
@@ -13,8 +17,8 @@
             <div style="min-width:0">
               <div style="font-size:18px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{
                 card.display_name }}</div>
-              <div class="muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{
-                card.base_url }}</div>
+              <div class="muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" :title="card.base_url">{{
+                hostOf(card.base_url) }}</div>
             </div>
           </div>
           <el-switch :model-value="card.enabled" @click.stop @change="toggleProvider(card, Boolean($event))" />
@@ -235,6 +239,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
+import PageSkeleton from '../components/PageSkeleton.vue'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { ElNotification } from 'element-plus/es/components/notification/index'
 import { Check, CircleCheck, Clock, Close, CopyDocument, Delete, Plus, Refresh, Remove, WarnTriangleFilled } from '@element-plus/icons-vue'
@@ -243,6 +248,8 @@ import { api, OfficialQuotaResult, ProviderConfig, ProviderKey } from '../api/cl
 type EditableKey = ProviderKey & { isNew?: boolean }
 type ProviderCard = ProviderConfig & { keyCount: number; enabledKeyCount: number; totalSuccess: number; totalFailure: number; totalCalls: number }
 
+const loading = ref(true)
+const loaded = ref(false)
 const providers = ref<ProviderConfig[]>([])
 const keys = ref<EditableKey[]>([])
 const dialogVisible = ref(false)
@@ -346,6 +353,14 @@ function providerShortName(name: string) {
   return (name || 'S').slice(0, 1).toUpperCase()
 }
 
+function hostOf(url: string) {
+  try {
+    return new URL(url).host || url
+  } catch {
+    return url.replace(/^https?:\/\//, '').split('/')[0] || url
+  }
+}
+
 function formatNumber(value?: number) {
   if (value === undefined || value === null || !Number.isFinite(value)) return '-'
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value)
@@ -409,9 +424,15 @@ async function copyText(text: string) {
 }
 
 async function load() {
-  const [providerResult, keyResult] = await Promise.all([api.providers(), api.keys()])
-  providers.value = providerResult.providers
-  keys.value = keyResult.keys
+  loading.value = true
+  try {
+    const [providerResult, keyResult] = await Promise.all([api.providers(), api.keys()])
+    providers.value = providerResult.providers
+    keys.value = keyResult.keys
+    loaded.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 function openProvider(provider: ProviderConfig) {

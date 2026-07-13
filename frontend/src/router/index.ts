@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useSessionStore } from '../stores/session'
+
 const LoginView = () => import('../views/LoginView.vue')
 const DashboardView = () => import('../views/DashboardView.vue')
 const ProvidersView = () => import('../views/ProvidersView.vue')
@@ -28,7 +29,7 @@ const router = createRouter({
 router.beforeEach((to) => {
   const session = useSessionStore()
   if (!to.meta.public && !session.token) return '/login'
-  if (to.path === '/login' && session.token) return '/'
+  if (to.path === '/login' && session.token) return '/playground'
 })
 
 export default router

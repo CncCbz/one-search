@@ -13,8 +13,10 @@ import { ElForm, ElFormItem } from 'element-plus/es/components/form/index'
 import { ElIcon } from 'element-plus/es/components/icon/index'
 import { ElInput } from 'element-plus/es/components/input/index'
 import { ElInputNumber } from 'element-plus/es/components/input-number/index'
+import { ElLoading } from 'element-plus/es/components/loading/index'
 import { ElMenu, ElMenuItem } from 'element-plus/es/components/menu/index'
 import { ElOption, ElSelect } from 'element-plus/es/components/select/index'
+import { ElRadioButton, ElRadioGroup } from 'element-plus/es/components/radio/index'
 import { ElRow } from 'element-plus/es/components/row/index'
 import { ElSwitch } from 'element-plus/es/components/switch/index'
 import { ElTabPane, ElTabs } from 'element-plus/es/components/tabs/index'
@@ -46,10 +48,13 @@ const app = createApp(App)
   ElIcon,
   ElInput,
   ElInputNumber,
+  ElLoading,
   ElMain,
   ElMenu,
   ElMenuItem,
   ElOption,
+  ElRadioButton,
+  ElRadioGroup,
   ElRow,
   ElSelect,
   ElSwitch,

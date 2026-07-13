@@ -1,11 +1,15 @@
 <template>
-  <div>
-    <div class="page-actions logs-actions">
-      <el-switch v-model="autoRefresh" active-text="自动刷新" />
-      <el-button :loading="loading" @click="load">刷新</el-button>
+  <div class="logs-page">
+    <div class="page-hd">
+      <h1>请求日志</h1>
+      <div class="page-actions logs-actions">
+        <el-switch v-model="autoRefresh" active-text="自动刷新" />
+        <el-button :icon="Refresh" circle :loading="loading" title="刷新" @click="load" />
+      </div>
     </div>
-    <el-card class="soft-card logs-card" shadow="never">
-      <el-table :data="logs" stripe row-key="id" class="logs-table" height="calc(100vh - 150px)">
+    <PageSkeleton v-if="loading && !loaded" type="table" :rows="8" class="logs-skeleton" />
+    <el-card v-else class="soft-card logs-card" shadow="never" v-loading="loading">
+      <el-table :data="logs" stripe row-key="id" class="logs-table" height="100%">
         <el-table-column label="请求" min-width="360">
           <template #default="scope">
             <div class="log-main-cell">
@@ -41,9 +45,10 @@
         <el-table-column label="耗时" width="120">
           <template #default="scope">{{ formatLatency(scope.row.latency_ms) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="90" align="right">
-          <template #default="scope"><el-button link type="primary"
-              @click="openDetail(scope.row)">详情</el-button></template>
+        <el-table-column label="" width="64" align="right">
+          <template #default="scope">
+            <el-button link type="primary" :icon="View" title="详情" @click="openDetail(scope.row)" />
+          </template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -176,7 +181,8 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Refresh, View } from '@element-plus/icons-vue'
+import PageSkeleton from '../components/PageSkeleton.vue'
 import { api, ProviderCallLog, SearchLog } from '../api/client'
 import { providerLabel } from '../utils/providers'
 
@@ -229,7 +235,8 @@ type SearchResponseLog = {
 }
 
 const logs = ref<SearchLog[]>([])
-const loading = ref(false)
+const loading = ref(true)
+const loaded = ref(false)
 const autoRefresh = ref(true)
 let refreshTimer: ReturnType<typeof window.setInterval> | undefined
 const detailVisible = ref(false)
@@ -387,6 +394,7 @@ async function load() {
   try {
     logs.value = (await api.logs()).logs
   } finally {
+    loaded.value = true
     loading.value = false
   }
 }
@@ -425,12 +433,45 @@ onBeforeUnmount(stopAutoRefresh)
 </script>
 
 <style scoped>
+.logs-page {
+  height: calc(100dvh - 76px);
+  max-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.logs-page .page-hd {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+.logs-skeleton {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.logs-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.logs-card :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.logs-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
 .logs-actions {
   gap: 12px;
-}
-
-.logs-card :deep(.el-card__body) {
-  padding-bottom: 0;
 }
 
 .logs-table :deep(.el-table__cell) {

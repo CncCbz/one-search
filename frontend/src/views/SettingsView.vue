@@ -1,10 +1,14 @@
 <template>
   <div>
-    <div class="page-actions">
-      <el-button type="primary" @click="save">保存设置</el-button>
+    <div class="page-hd">
+      <h1>系统设置</h1>
+      <div class="page-actions">
+        <el-button type="primary" :loading="loading" @click="save">保存</el-button>
+      </div>
     </div>
 
-    <div v-if="settings" class="settings-grid">
+    <PageSkeleton v-if="loading && !settings" type="form" />
+    <div v-else-if="settings" class="settings-grid" v-loading="loading">
       <el-card class="soft-card settings-section" shadow="never">
         <template #header>搜索默认值</template>
         <div class="settings-items">
@@ -135,22 +139,29 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import PageSkeleton from '../components/PageSkeleton.vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { api, AdminAPIKey, RuntimeSettings } from '../api/client'
 import { providerOptions } from '../utils/providers'
 
+const loading = ref(true)
 const settings = ref<RuntimeSettings>()
 const adminAPIKey = ref<AdminAPIKey>()
 const rawAdminAPIKey = ref('')
 
 async function load() {
-  const [runtimeSettings, currentAdminAPIKey] = await Promise.all([api.settings(), api.adminAPIKey()])
-  settings.value = runtimeSettings
-  adminAPIKey.value = currentAdminAPIKey
-  if (!settings.value.provider_health_window_minutes) settings.value.provider_health_window_minutes = 15
-  if (!settings.value.provider_routing_strategy) settings.value.provider_routing_strategy = 'fixed'
-  if (!settings.value.log_retention_days) settings.value.log_retention_days = 3
+  loading.value = true
+  try {
+    const [runtimeSettings, currentAdminAPIKey] = await Promise.all([api.settings(), api.adminAPIKey()])
+    settings.value = runtimeSettings
+    adminAPIKey.value = currentAdminAPIKey
+    if (!settings.value.provider_health_window_minutes) settings.value.provider_health_window_minutes = 15
+    if (!settings.value.provider_routing_strategy) settings.value.provider_routing_strategy = 'fixed'
+    if (!settings.value.log_retention_days) settings.value.log_retention_days = 3
+  } finally {
+    loading.value = false
+  }
 }
 
 async function copyText(text: string) {
