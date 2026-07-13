@@ -6,3 +6,5 @@ backend/tmp/
 frontend/node_modules/
 frontend/dist/
 coverage/
+.pi-subagents/
+docs/
