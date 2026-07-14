@@ -1,10 +1,21 @@
+# secrets & local env
 .env
+.env.*
+!.env.example
+
+# logs / os junk
 *.log
 .DS_Store
+
+# backend build artifacts
 backend/one-search
 backend/tmp/
+
+# frontend
 frontend/node_modules/
 frontend/dist/
+
+# coverage / local agent / design drafts
 coverage/
 .pi-subagents/
 docs/
