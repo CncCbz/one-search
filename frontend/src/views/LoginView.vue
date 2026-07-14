@@ -1,7 +1,7 @@
 <template>
   <div class="login-page">
     <el-card class="login-card soft-card" shadow="never">
-      <div class="login-logo">OS</div>
+      <img class="login-logo" src="/icon-192.png" alt="One Search" width="52" height="52" />
       <h2>One Search</h2>
       <p class="muted">搜索中转控制台</p>
       <el-form label-position="top" @submit.prevent="login">
@@ -43,8 +43,8 @@ async function login() {
 .login-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .login-card { width: 390px; text-align: center; }
 .login-logo {
-  width: 52px; height: 52px; display: grid; place-items: center; margin: 0 auto 12px;
-  border-radius: 14px; background: var(--primary); color: #fff; font-weight: 900; font-size: 16px;
+  width: 52px; height: 52px; display: block; margin: 0 auto 12px;
+  border-radius: 14px; object-fit: cover;
 }
 .full { width: 100%; }
 h2 { margin: 0 0 4px; letter-spacing: -0.02em; }

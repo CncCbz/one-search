@@ -82,12 +82,8 @@ a { color: inherit; }
   height: 32px;
   border-radius: 11px;
   flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  background: var(--primary);
-  color: #fff;
-  font-weight: 800;
-  font-size: 11px;
+  object-fit: cover;
+  display: block;
 }
 .float-brand strong {
   font-size: 13px;

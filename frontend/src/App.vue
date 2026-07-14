@@ -3,7 +3,7 @@
   <div v-else class="app-shell">
     <aside class="float-nav" aria-label="主导航">
       <router-link class="float-brand" to="/playground" title="One Search">
-        <div class="float-mark">OS</div>
+        <img class="float-mark" src="/icon-192.png" alt="" width="28" height="28" />
         <strong>One Search</strong>
       </router-link>
 
