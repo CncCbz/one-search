@@ -9,7 +9,11 @@
 - Web 管理台：Provider、Key、Token、调试、日志、用量、审计
 - 可选 MCP（`search` 工具）
 
-默认 Docker 部署为 **all-in-one 单容器**（Nginx + Go + PostgreSQL）。
+预览图
+<p>
+  <img src="./docs/images/搜索调试.png" alt="搜索调试" width="132" />
+  <img src="./docs/images/仪表盘.png" alt="仪表盘" width="120" />
+</p>
 
 ## 快速部署
 
@@ -188,5 +192,4 @@ docs/        接口文档
 
 ## License
 
-[MIT](LICENSE) © 2026 CncCbz
-```
+[Apache License 2.0](LICENSE) © 2026 CncCbz
