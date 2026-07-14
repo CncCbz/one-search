@@ -193,3 +193,7 @@ docs/        接口文档
 ## License
 
 [Apache License 2.0](LICENSE) © 2026 CncCbz
+
+## 致谢
+
+感谢 [LINUX DO](https://linux.do) 社区。
