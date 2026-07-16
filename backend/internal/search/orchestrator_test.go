@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,9 +13,12 @@ import (
 )
 
 type orchestratorTestStore struct {
+	mu        sync.Mutex
 	settings  model.RuntimeSettings
 	providers []model.ProviderConfig
 	cache     map[string][]byte
+	lastTTL   int
+	setCount  int
 }
 
 func (s *orchestratorTestStore) GetAPIKeyByID(ctx context.Context, id int64) (model.APIKey, error) {
@@ -41,6 +46,8 @@ func (s *orchestratorTestStore) RecordSearchLog(ctx context.Context, input model
 }
 
 func (s *orchestratorTestStore) GetCache(ctx context.Context, cacheKey string) ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cache == nil {
 		return nil, false, nil
 	}
@@ -52,25 +59,36 @@ func (s *orchestratorTestStore) GetCache(ctx context.Context, cacheKey string) (
 }
 
 func (s *orchestratorTestStore) SetCache(ctx context.Context, cacheKey string, payload []byte, ttlSeconds int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cache == nil {
 		s.cache = map[string][]byte{}
 	}
 	s.cache[cacheKey] = append([]byte(nil), payload...)
+	s.lastTTL = ttlSeconds
+	s.setCount++
 	return nil
 }
 
 type orchestratorTestKeyPool struct {
+	mu       sync.Mutex
 	acquired []string
 }
 
 func (p *orchestratorTestKeyPool) Acquire(ctx context.Context, providerName string) (model.APIKey, func(bool, error), error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.acquired = append(p.acquired, providerName)
 	return model.APIKey{ID: int64(len(p.acquired)), ProviderName: providerName, Alias: providerName + "-key", Value: "test-key"}, func(bool, error) {}, nil
 }
 
 type orchestratorTestProvider struct {
-	name  string
-	delay time.Duration
+	name       string
+	delay      time.Duration
+	err        error
+	resultN    int
+	empty      bool
+	searchHook func()
 }
 
 func (p orchestratorTestProvider) Name() string {
@@ -78,6 +96,9 @@ func (p orchestratorTestProvider) Name() string {
 }
 
 func (p orchestratorTestProvider) Search(ctx context.Context, req model.SearchRequest, key model.APIKey) (model.ProviderResponse, error) {
+	if p.searchHook != nil {
+		p.searchHook()
+	}
 	if p.delay > 0 {
 		select {
 		case <-time.After(p.delay):
@@ -85,7 +106,26 @@ func (p orchestratorTestProvider) Search(ctx context.Context, req model.SearchRe
 			return model.ProviderResponse{}, ctx.Err()
 		}
 	}
-	return model.ProviderResponse{Results: []model.SearchResult{{Title: p.name, URL: "https://example.com/" + p.name, Provider: p.name, Score: 1}}}, nil
+	if p.err != nil {
+		return model.ProviderResponse{}, p.err
+	}
+	if p.empty {
+		return model.ProviderResponse{}, nil
+	}
+	n := p.resultN
+	if n <= 0 {
+		n = 1
+	}
+	results := make([]model.SearchResult, 0, n)
+	for i := 0; i < n; i++ {
+		results = append(results, model.SearchResult{
+			Title:    p.name,
+			URL:      "https://example.com/" + p.name + "/" + string(rune('a'+i)),
+			Provider: p.name,
+			Score:    1,
+		})
+	}
+	return model.ProviderResponse{Results: results}, nil
 }
 
 func (p orchestratorTestProvider) HealthCheck(ctx context.Context, key model.APIKey) error {
@@ -224,6 +264,119 @@ func TestCacheKeyStableAcrossProviderOrder(t *testing.T) {
 	right := o.cacheKey(model.SearchRequest{Query: "q", Providers: []string{"a", "b"}, Mode: model.SearchModeParallel, Limit: 10}, map[string]int{"a": 5, "b": 8, "c": 9})
 	if left != right {
 		t.Fatalf("cache keys differ: %s vs %s", left, right)
+	}
+}
+
+func TestCacheTruncatesResultsOnWrite(t *testing.T) {
+	store := &orchestratorTestStore{
+		settings: model.RuntimeSettings{
+			DefaultMode: model.SearchModeSingle, DefaultProviders: []string{model.ProviderSerper}, DefaultLimit: 10,
+			DefaultDedupe: true, RequestTimeoutMS: 1000, CacheEnabled: true, CacheTTLSeconds: 60, CacheMaxResults: 2,
+		},
+		providers: []model.ProviderConfig{{Name: model.ProviderSerper, Enabled: true, Priority: 1, Weight: 1}},
+		cache:     map[string][]byte{},
+	}
+	orchestrator := NewOrchestrator(provider.NewRegistry(orchestratorTestProvider{name: model.ProviderSerper, resultN: 5}), &orchestratorTestKeyPool{}, store)
+	resp, err := orchestrator.Search(context.Background(), model.SearchRequest{Query: "q", Providers: []string{model.ProviderSerper}, ProvidersExplicit: true, Mode: model.SearchModeSingle}, "r1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 5 {
+		t.Fatalf("live response results = %d, want 5", len(resp.Results))
+	}
+	if len(store.cache) != 1 {
+		t.Fatalf("cache entries = %d, want 1", len(store.cache))
+	}
+	var cached model.SearchResponse
+	for _, payload := range store.cache {
+		if err := json.Unmarshal(payload, &cached); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(cached.Results) != 2 {
+		t.Fatalf("cached results = %d, want 2", len(cached.Results))
+	}
+}
+
+func TestCacheSkipsPartialParallelErrors(t *testing.T) {
+	store := &orchestratorTestStore{
+		settings: model.RuntimeSettings{
+			DefaultMode: model.SearchModeParallel, DefaultProviders: []string{model.ProviderSerper, model.ProviderBrave},
+			DefaultLimit: 10, DefaultDedupe: true, RequestTimeoutMS: 1000, CacheEnabled: true, CacheTTLSeconds: 60,
+		},
+		providers: []model.ProviderConfig{
+			{Name: model.ProviderSerper, Enabled: true, Priority: 1, Weight: 1},
+			{Name: model.ProviderBrave, Enabled: true, Priority: 2, Weight: 1},
+		},
+		cache: map[string][]byte{},
+	}
+	orchestrator := NewOrchestrator(provider.NewRegistry(
+		orchestratorTestProvider{name: model.ProviderSerper},
+		orchestratorTestProvider{name: model.ProviderBrave, err: context.DeadlineExceeded},
+	), &orchestratorTestKeyPool{}, store)
+	resp, err := orchestrator.Search(context.Background(), model.SearchRequest{
+		Query: "q", Providers: []string{model.ProviderSerper, model.ProviderBrave}, ProvidersExplicit: true, Mode: model.SearchModeParallel,
+	}, "r1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("expected partial results")
+	}
+	if len(store.cache) != 0 {
+		t.Fatalf("partial parallel errors should not cache, entries=%d", len(store.cache))
+	}
+}
+
+func TestCacheEmptyResultsUseShortTTL(t *testing.T) {
+	store := &orchestratorTestStore{
+		settings: model.RuntimeSettings{
+			DefaultMode: model.SearchModeSingle, DefaultProviders: []string{model.ProviderSerper}, DefaultLimit: 10,
+			DefaultDedupe: true, RequestTimeoutMS: 1000, CacheEnabled: true, CacheTTLSeconds: 3600,
+		},
+		providers: []model.ProviderConfig{{Name: model.ProviderSerper, Enabled: true, Priority: 1, Weight: 1}},
+		cache:     map[string][]byte{},
+	}
+	orchestrator := NewOrchestrator(provider.NewRegistry(orchestratorTestProvider{name: model.ProviderSerper, empty: true}), &orchestratorTestKeyPool{}, store)
+	if _, err := orchestrator.Search(context.Background(), model.SearchRequest{Query: "q", Providers: []string{model.ProviderSerper}, ProvidersExplicit: true, Mode: model.SearchModeSingle}, "r1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if store.setCount != 1 {
+		t.Fatalf("setCount=%d, want 1", store.setCount)
+	}
+	if store.lastTTL != emptyResultCacheTTLSeconds {
+		t.Fatalf("empty ttl=%d, want %d", store.lastTTL, emptyResultCacheTTLSeconds)
+	}
+}
+
+func TestSearchSingleflightCoalesces(t *testing.T) {
+	store := &orchestratorTestStore{
+		settings: model.RuntimeSettings{
+			DefaultMode: model.SearchModeSingle, DefaultProviders: []string{model.ProviderSerper}, DefaultLimit: 10,
+			DefaultDedupe: true, RequestTimeoutMS: 2000, CacheEnabled: true, CacheTTLSeconds: 60,
+		},
+		providers: []model.ProviderConfig{{Name: model.ProviderSerper, Enabled: true, Priority: 1, Weight: 1}},
+		cache:     map[string][]byte{},
+	}
+	keyPool := &orchestratorTestKeyPool{}
+	orchestrator := NewOrchestrator(provider.NewRegistry(orchestratorTestProvider{name: model.ProviderSerper, delay: 80 * time.Millisecond}), keyPool, store)
+	req := model.SearchRequest{Query: "coalesce", Providers: []string{model.ProviderSerper}, ProvidersExplicit: true, Mode: model.SearchModeSingle}
+
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		id := fmt.Sprintf("req-%d", i)
+		go func(requestID string) {
+			_, err := orchestrator.Search(context.Background(), req, requestID, 0)
+			done <- err
+		}(id)
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(keyPool.acquired) != 1 {
+		t.Fatalf("singleflight should acquire once, acquired=%v", keyPool.acquired)
 	}
 }
 

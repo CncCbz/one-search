@@ -224,8 +224,6 @@ curl "$BASE_URL/api/admin/providers" \
       "priority": 10,
       "weight": 1,
       "timeout_ms": 12000,
-      "default_cache_enabled": false,
-      "cache_ttl_seconds": 86400,
       "settings": { "key_retry_count": 3, "max_concurrency": 0 },
       "available_keys": 1
     }
@@ -246,8 +244,6 @@ curl -X PATCH "$BASE_URL/api/admin/providers/exa" \
     "priority": 10,
     "weight": 1,
     "timeout_ms": 12000,
-    "default_cache_enabled": false,
-    "cache_ttl_seconds": 86400,
     "settings": {
       "key_retry_count": 3,
       "max_concurrency": 0,
@@ -509,8 +505,8 @@ curl -X PUT "$BASE_URL/api/admin/settings" \
 | `default_dedupe` | 是否默认去重。 |
 | `request_timeout_ms` | 单次搜索总超时。 |
 | `cache_enabled` | 是否开启缓存。 |
-| `cache_ttl_seconds` | 缓存 TTL。 |
-| `cache_max_results` | 缓存相关预留配置。 |
+| `cache_ttl_seconds` | 缓存 TTL；空结果会用更短 TTL（60s，且不超过该值）。 |
+| `cache_max_results` | 单次响应最多缓存的结果条数，超出截断后写入；0 表示不截断。 |
 | `compat_tavily_enabled` | 是否启用 Tavily-like 兼容接口。 |
 | `compat_serper_enabled` | 是否启用 Serper-like 兼容接口。 |
 | `compat_openai_enabled` | 是否启用 OpenAI-like 兼容接口。 |

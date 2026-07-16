@@ -121,8 +121,6 @@ export interface ProviderConfig {
   priority: number
   weight: number
   timeout_ms: number
-  default_cache_enabled: boolean
-  cache_ttl_seconds: number
   settings?: Record<string, unknown>
   available_keys?: number
 }

@@ -13,9 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/one-search/one-search/backend/internal/model"
 	"github.com/one-search/one-search/backend/internal/provider"
 )
+
+const emptyResultCacheTTLSeconds = 60
 
 type KeyPool interface {
 	Acquire(ctx context.Context, providerName string) (model.APIKey, func(bool, error), error)
@@ -38,6 +42,7 @@ type Orchestrator struct {
 	store          Store
 	quotaMu        sync.Mutex
 	quotaRefreshes map[int64]quotaRefreshState
+	searchGroup    singleflight.Group
 }
 
 type quotaRefreshState struct {
@@ -115,6 +120,81 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 		}
 	}
 
+	run := func(runCtx context.Context) (searchOutcome, error) {
+		return o.executeSearch(runCtx, req, cacheKey, cacheWrite, settings, providerConfigByName, providerLimits, keyRetryCounts, providerTimeouts, providerProxies, providerRetryableErrors)
+	}
+
+	var outcome searchOutcome
+	var errRun error
+	if cacheWrite {
+		v, err, _ := o.searchGroup.Do(cacheKey, func() (interface{}, error) {
+			flightCtx, cancel := detachContext(ctx)
+			defer cancel()
+			out, err := run(flightCtx)
+			if err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+		errRun = err
+		if errRun == nil {
+			outcome = v.(searchOutcome)
+		}
+	} else {
+		outcome, errRun = run(ctx)
+	}
+	if errRun != nil {
+		return model.SearchResponse{}, errRun
+	}
+
+	response := outcome.response
+	response.Meta.RequestID = requestID
+	response.Meta.LatencyMS = time.Since(started).Milliseconds()
+	response.Meta.CacheHit = false
+	response.Meta.CacheKey = cacheKey
+
+	requestJSON, _ := json.Marshal(req)
+	responseJSON, _ := json.Marshal(responseLogPayload(response, outcome.providerResults))
+	_ = o.store.RecordSearchLog(context.Background(), model.SearchLogInput{
+		RequestID:    requestID,
+		APITokenID:   apiTokenID,
+		Query:        req.Query,
+		Mode:         string(req.Mode),
+		CompatFormat: string(req.CompatFormat),
+		Providers:    req.Providers,
+		CachePolicy:  string(req.Cache),
+		CacheHit:     false,
+		ResultCount:  len(response.Results),
+		Status:       outcome.status,
+		ErrorMessage: outcome.errorMessage,
+		LatencyMS:    response.Meta.LatencyMS,
+		RequestJSON:  requestJSON,
+		ResponseJSON: responseJSON,
+		Calls:        callLogs(outcome.providerResults),
+	})
+	return response, nil
+}
+
+type searchOutcome struct {
+	response        model.SearchResponse
+	providerResults []providerExecution
+	status          string
+	errorMessage    string
+}
+
+func (o *Orchestrator) executeSearch(
+	ctx context.Context,
+	req model.SearchRequest,
+	cacheKey string,
+	cacheWrite bool,
+	settings model.RuntimeSettings,
+	providerConfigByName map[string]model.ProviderConfig,
+	providerLimits map[string]int,
+	keyRetryCounts map[string]int,
+	providerTimeouts map[string]int,
+	providerProxies map[string]string,
+	providerRetryableErrors map[string]map[string]bool,
+) (searchOutcome, error) {
 	var providerResults []providerExecution
 	switch req.Mode {
 	case model.SearchModeFallback:
@@ -136,10 +216,8 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 		Results:   results,
 		Providers: summaries(providerResults),
 		Meta: model.SearchMeta{
-			RequestID:        requestID,
 			Mode:             req.Mode,
 			CompatFormat:     req.CompatFormat,
-			LatencyMS:        time.Since(started).Milliseconds(),
 			TotalResults:     len(results),
 			DedupedResults:   deduped,
 			CacheHit:         false,
@@ -147,33 +225,66 @@ func (o *Orchestrator) Search(ctx context.Context, req model.SearchRequest, requ
 			ProvidersQueried: providersQueried(providerResults),
 		},
 	}
-	requestJSON, _ := json.Marshal(req)
-	responseJSON, _ := json.Marshal(responseLogPayload(response, providerResults))
-	_ = o.store.RecordSearchLog(context.Background(), model.SearchLogInput{
-		RequestID:    requestID,
-		APITokenID:   apiTokenID,
-		Query:        req.Query,
-		Mode:         string(req.Mode),
-		CompatFormat: string(req.CompatFormat),
-		Providers:    req.Providers,
-		CachePolicy:  string(req.Cache),
-		CacheHit:     false,
-		ResultCount:  len(response.Results),
-		Status:       status,
-		ErrorMessage: errorMessage,
-		LatencyMS:    response.Meta.LatencyMS,
-		RequestJSON:  requestJSON,
-		ResponseJSON: responseJSON,
-		Calls:        callLogs(providerResults),
-	})
-	if status == "success" && cacheWrite {
-		if settings.CacheMaxResults > 0 && len(response.Results) > settings.CacheMaxResults {
-			// skip oversized responses
-		} else if payload, err := json.Marshal(response); err == nil {
-			_ = o.store.SetCache(context.Background(), cacheKey, payload, settings.CacheTTLSeconds)
+	if cacheWrite && shouldWriteSearchCache(req.Mode, status, providerResults) {
+		toStore := truncateResultsForCache(response, settings.CacheMaxResults)
+		if payload, err := json.Marshal(toStore); err == nil {
+			_ = o.store.SetCache(context.Background(), cacheKey, payload, cacheTTLSeconds(settings.CacheTTLSeconds, len(toStore.Results)))
 		}
 	}
-	return response, nil
+	return searchOutcome{response: response, providerResults: providerResults, status: status, errorMessage: errorMessage}, nil
+}
+
+func detachContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(context.Background(), deadline)
+	}
+	return context.WithCancel(context.Background())
+}
+
+func shouldWriteSearchCache(mode model.SearchMode, status string, executions []providerExecution) bool {
+	if status != "success" {
+		return false
+	}
+	switch mode {
+	case model.SearchModeFallback, model.SearchModeSingle:
+		for _, execution := range executions {
+			if execution.err == nil {
+				return true
+			}
+		}
+		return false
+	default: // parallel
+		return !hasAnyProviderError(executions)
+	}
+}
+
+func hasAnyProviderError(executions []providerExecution) bool {
+	for _, execution := range executions {
+		if execution.err != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateResultsForCache(response model.SearchResponse, maxResults int) model.SearchResponse {
+	if maxResults <= 0 || len(response.Results) <= maxResults {
+		return response
+	}
+	cloned := response
+	cloned.Results = append([]model.SearchResult(nil), response.Results[:maxResults]...)
+	cloned.Meta.TotalResults = len(cloned.Results)
+	return cloned
+}
+
+func cacheTTLSeconds(configuredTTL, resultCount int) int {
+	if resultCount == 0 {
+		if configuredTTL > 0 && configuredTTL < emptyResultCacheTTLSeconds {
+			return configuredTTL
+		}
+		return emptyResultCacheTTLSeconds
+	}
+	return configuredTTL
 }
 
 func (o *Orchestrator) searchParallel(ctx context.Context, req model.SearchRequest, providerConfigs map[string]model.ProviderConfig, providerLimits map[string]int, keyRetryCounts map[string]int, providerTimeouts map[string]int, providerProxies map[string]string, retryableErrors map[string]map[string]bool) []providerExecution {

@@ -96,7 +96,7 @@
         <div class="sec-hd">
           <div>
             <h2>搜索缓存（全局）</h2>
-            <p>整次搜索结果缓存 · 渠道级开关不参与编排</p>
+            <p>整次搜索结果缓存 · parallel 部分失败不写 · 相同请求 singleflight 合并</p>
           </div>
           <el-tag :type="settings.cache_enabled ? 'success' : 'info'" effect="plain" round>
             {{ settings.cache_enabled ? '已启用' : '已关闭' }}
@@ -127,6 +127,7 @@
               controls-position="right"
               :disabled="!settings.cache_enabled"
             />
+            <span class="hint">单次响应超出则截断后写入；0 表示不截断</span>
           </div>
         </div>
       </section>

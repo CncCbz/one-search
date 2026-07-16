@@ -103,18 +103,16 @@ type ProviderResponse struct {
 }
 
 type ProviderConfig struct {
-	ID                  int64                  `json:"id"`
-	Name                string                 `json:"name"`
-	DisplayName         string                 `json:"display_name"`
-	BaseURL             string                 `json:"base_url"`
-	Enabled             bool                   `json:"enabled"`
-	Priority            int                    `json:"priority"`
-	Weight              int                    `json:"weight"`
-	TimeoutMS           int                    `json:"timeout_ms"`
-	DefaultCacheEnabled bool                   `json:"default_cache_enabled"`
-	CacheTTLSeconds     int                    `json:"cache_ttl_seconds"`
-	Settings            map[string]interface{} `json:"settings,omitempty"`
-	AvailableKeys       int                    `json:"available_keys,omitempty"`
+	ID            int64                  `json:"id"`
+	Name          string                 `json:"name"`
+	DisplayName   string                 `json:"display_name"`
+	BaseURL       string                 `json:"base_url"`
+	Enabled       bool                   `json:"enabled"`
+	Priority      int                    `json:"priority"`
+	Weight        int                    `json:"weight"`
+	TimeoutMS     int                    `json:"timeout_ms"`
+	Settings      map[string]interface{} `json:"settings,omitempty"`
+	AvailableKeys int                    `json:"available_keys,omitempty"`
 }
 
 type APIKey struct {

@@ -186,8 +186,7 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, settings model.Runtim
 
 func (s *Store) ListProviders(ctx context.Context) ([]model.ProviderConfig, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.id, p.name, p.display_name, p.base_url, p.enabled, p.priority, p.weight, p.timeout_ms,
-		       p.default_cache_enabled, p.cache_ttl_seconds, p.settings,
+		SELECT p.id, p.name, p.display_name, p.base_url, p.enabled, p.priority, p.weight, p.timeout_ms, p.settings,
 		       COUNT(k.id) FILTER (WHERE k.status='enabled' OR (k.status='cooling' AND (k.cooldown_until IS NULL OR k.cooldown_until < now()))) AS available_keys
 		FROM providers p
 		LEFT JOIN provider_keys k ON k.provider_id = p.id
@@ -202,7 +201,7 @@ func (s *Store) ListProviders(ctx context.Context) ([]model.ProviderConfig, erro
 	for rows.Next() {
 		var item model.ProviderConfig
 		var settingsBytes []byte
-		if err := rows.Scan(&item.ID, &item.Name, &item.DisplayName, &item.BaseURL, &item.Enabled, &item.Priority, &item.Weight, &item.TimeoutMS, &item.DefaultCacheEnabled, &item.CacheTTLSeconds, &settingsBytes, &item.AvailableKeys); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.DisplayName, &item.BaseURL, &item.Enabled, &item.Priority, &item.Weight, &item.TimeoutMS, &settingsBytes, &item.AvailableKeys); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(settingsBytes, &item.Settings)
@@ -219,9 +218,9 @@ func (s *Store) UpdateProvider(ctx context.Context, provider model.ProviderConfi
 	_, err = s.pool.Exec(ctx, `
 		UPDATE providers
 		SET display_name=$2, base_url=$3, enabled=$4, priority=$5, weight=$6, timeout_ms=$7,
-		    default_cache_enabled=$8, cache_ttl_seconds=$9, settings=$10::jsonb, updated_at=now()
+		    settings=$8::jsonb, updated_at=now()
 		WHERE name=$1
-	`, provider.Name, provider.DisplayName, provider.BaseURL, provider.Enabled, provider.Priority, provider.Weight, provider.TimeoutMS, provider.DefaultCacheEnabled, provider.CacheTTLSeconds, string(settingsBytes))
+	`, provider.Name, provider.DisplayName, provider.BaseURL, provider.Enabled, provider.Priority, provider.Weight, provider.TimeoutMS, string(settingsBytes))
 	return err
 }
 
@@ -1479,9 +1478,9 @@ func (s *Store) ListAuditLogs(ctx context.Context, limit int) ([]model.AuditLog,
 func (s *Store) GetCache(ctx context.Context, cacheKey string) ([]byte, bool, error) {
 	var payload []byte
 	err := s.pool.QueryRow(ctx, `
-		UPDATE search_cache SET hit_count=hit_count+1, updated_at=now()
+		SELECT response_json
+		FROM search_cache
 		WHERE cache_key=$1 AND expires_at > now()
-		RETURNING response_json
 	`, cacheKey).Scan(&payload)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
