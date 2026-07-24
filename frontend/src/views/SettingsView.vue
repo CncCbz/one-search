@@ -86,6 +86,10 @@
             <label>日志保留天数</label>
             <el-input-number v-model="settings.log_retention_days" :min="1" :max="365" controls-position="right" />
           </div>
+          <div class="field">
+            <label>请求日志近窗条数</label>
+            <el-input-number v-model="settings.search_logs_limit" :min="1" :max="1000" controls-position="right" />
+          </div>
         </div>
         <div v-if="!settings.api_auth_required" class="warn-banner">
           接口鉴权已关闭，仅建议本地调试环境使用。
@@ -240,6 +244,7 @@ function normalize(s: RuntimeSettings): RuntimeSettings {
     provider_health_window_minutes: s.provider_health_window_minutes || 15,
     provider_routing_strategy: s.provider_routing_strategy || 'fixed',
     log_retention_days: s.log_retention_days || 3,
+    search_logs_limit: s.search_logs_limit || 100,
   }
 }
 

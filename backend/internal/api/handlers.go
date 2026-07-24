@@ -759,6 +759,10 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) logs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		settings, _ := h.store.RuntimeSettings(r.Context())
+		limit = settings.SearchLogsLimit
+	}
 	logs, err := h.store.ListSearchLogs(r.Context(), limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

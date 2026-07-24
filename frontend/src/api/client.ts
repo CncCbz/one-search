@@ -221,6 +221,7 @@ export interface RuntimeSettings {
   provider_health_window_minutes: number
   provider_routing_strategy: string
   log_retention_days: number
+  search_logs_limit: number
 }
 
 export interface SearchLog {
@@ -301,7 +302,7 @@ export const api = {
   updateSettings: (payload: RuntimeSettings) => apiFetch<RuntimeSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   adminAPIKey: () => apiFetch<AdminAPIKey>('/api/admin/settings/admin-api-key'),
   rotateAdminAPIKey: () => apiFetch<AdminAPIKey>('/api/admin/settings/admin-api-key', { method: 'POST' }),
-  logs: (limit = 100) => apiFetch<{ logs: SearchLog[] }>(`/api/admin/logs?limit=${Math.max(1, Math.min(limit, 500))}`),
+  logs: (limit?: number) => apiFetch<{ logs: SearchLog[] }>(limit == null ? '/api/admin/logs' : `/api/admin/logs?limit=${Math.max(1, Math.min(limit, 1000))}`),
   logDetail: (id: number) => apiFetch<{ log: SearchLog; calls: ProviderCallLog[] }>('/api/admin/logs/' + id),
   usageSummary: () => apiFetch<UsageSummary>('/api/admin/usage/summary'),
   billingSummary: (days = 30) => apiFetch<BillingSummary>(`/api/admin/usage/billing?days=${days}`),

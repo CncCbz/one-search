@@ -155,6 +155,7 @@ type RuntimeSettings struct {
 	ProviderHealthWindowMinutes int        `json:"provider_health_window_minutes"`
 	ProviderRoutingStrategy     string     `json:"provider_routing_strategy"`
 	LogRetentionDays            int        `json:"log_retention_days"`
+	SearchLogsLimit             int        `json:"search_logs_limit"`
 }
 
 type UsageSummary struct {

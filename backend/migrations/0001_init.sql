@@ -188,5 +188,5 @@ ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO settings (key, value)
 VALUES
-    ('runtime', '{"default_mode":"parallel","default_providers":["exa","you","jina","tavily","firecrawl","serper","brave"],"default_limit":10,"default_dedupe":true,"request_timeout_ms":20000,"cache_enabled":false,"cache_ttl_seconds":3600,"cache_max_results":20,"compat_tavily_enabled":true,"compat_serper_enabled":true,"compat_openai_enabled":true,"api_auth_required":true,"provider_health_window_minutes":15,"provider_routing_strategy":"fixed","log_retention_days":3}'::jsonb)
+    ('runtime', '{"default_mode":"parallel","default_providers":["exa","you","jina","tavily","firecrawl","serper","brave"],"default_limit":10,"default_dedupe":true,"request_timeout_ms":20000,"cache_enabled":false,"cache_ttl_seconds":3600,"cache_max_results":20,"compat_tavily_enabled":true,"compat_serper_enabled":true,"compat_openai_enabled":true,"api_auth_required":true,"provider_health_window_minutes":15,"provider_routing_strategy":"fixed","log_retention_days":3,"search_logs_limit":100}'::jsonb)
 ON CONFLICT (key) DO NOTHING;

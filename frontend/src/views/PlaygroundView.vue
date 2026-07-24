@@ -1,174 +1,184 @@
 <template>
-  <div class="playground-page">
-    <div class="playground-head">
-      <h1>搜索调试</h1>
-      <el-tag :type="ready ? 'success' : 'warning'" effect="light" round>
-        {{ ready ? '可用' : '待配置' }}
-      </el-tag>
-    </div>
-
-    <PageSkeleton v-if="loadingMeta" type="playground" />
-    <template v-else>
-    <div v-if="!ready" class="setup-banner">
-      <div>
-        <p>还没有可用的搜索平台</p>
-        <span class="sub">启用 1 个平台并添加上游 Key 后再搜索</span>
-      </div>
-      <el-button type="primary" @click="$router.push('/providers')">去配置</el-button>
-    </div>
-
-    <el-card class="soft-card search-shell" :class="{ blocked: !ready }" shadow="never">
-      <div class="search-row">
-        <el-icon class="search-icon" :size="18"><Search /></el-icon>
-        <el-input
-          v-model="form.query"
-          class="search-input"
-          placeholder="输入搜索词"
-          :disabled="!ready"
-          @keyup.enter="run"
-        />
-        <el-button type="primary" :loading="loading" :disabled="!ready || !form.query.trim()" @click="run">
-          搜索
-        </el-button>
+  <div class="playground-page" :class="result ? 'has-result' : 'is-home'">
+    <div class="hero">
+      <div class="brand">
+        <h1>One<em>Search</em></h1>
+        <p>
+          统一搜索调试
+          <el-tag :type="ready ? 'success' : 'warning'" effect="light" round size="small">
+            {{ ready ? '可用' : '待配置' }}
+          </el-tag>
+        </p>
       </div>
 
-      <div class="search-tools">
-        <el-radio-group v-model="form.mode" size="small" :disabled="!ready">
-          <el-radio-button value="parallel">并发</el-radio-button>
-          <el-radio-button value="fallback">转移</el-radio-button>
-          <el-radio-button value="single">单源</el-radio-button>
-        </el-radio-group>
-
-        <el-select
-          v-model="form.providers"
-          class="provider-select"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          placeholder="搜索平台"
-          :disabled="!ready"
-        >
-          <el-option
-            v-for="item in availableProviderOptions"
-            :key="item.value"
-            :value="item.value"
-            :label="item.label"
-          />
-        </el-select>
-
-        <div class="limit-field">
-          <span>条数</span>
-          <el-input-number v-model="form.limit" :min="1" :max="50" controls-position="right" :disabled="!ready" />
-        </div>
-      </div>
-    </el-card>
-
-    </template>
-
-    <el-card v-if="result" class="soft-card result-card" shadow="never">
-      <template #header>
-        <div class="result-header">
+      <PageSkeleton v-if="loadingMeta" type="playground" />
+      <template v-else>
+        <div v-if="!ready" class="setup-banner">
           <div>
-            <strong>搜索结果</strong>
-            <span class="muted result-meta">
-              {{ result.meta?.total_results || result.results.length }} 条 · 去重 {{ result.meta?.deduped_results || 0 }} ·
-              {{ formatLatency(result.meta?.latency_ms || 0) }}
-            </span>
+            <p>还没有可用的搜索平台</p>
+            <span class="sub">启用 1 个平台并添加上游 Key 后再搜索</span>
           </div>
-          <el-tag size="small" type="info" effect="plain">{{ result.meta?.request_id || '-' }}</el-tag>
+          <el-button type="primary" @click="$router.push('/providers')">去配置</el-button>
+        </div>
+
+        <div class="shell" :class="{ blocked: !ready }">
+          <div class="search-row">
+            <el-icon class="search-icon" :size="18"><Search /></el-icon>
+            <el-input
+              v-model="form.query"
+              class="search-input"
+              placeholder="输入搜索词"
+              :disabled="!ready"
+              @keyup.enter="run"
+            />
+            <el-button type="primary" class="search-btn" :loading="loading" :disabled="!ready || !form.query.trim()" @click="run">
+              搜索
+            </el-button>
+          </div>
+          <div class="filters">
+            <label class="chip on">
+              <span>模式</span>
+              <el-select v-model="form.mode" size="small" :disabled="!ready" class="chip-select mode-select">
+                <el-option value="fallback" label="转移" />
+                <el-option value="parallel" label="并发" />
+                <el-option value="single" label="单源" />
+              </el-select>
+            </label>
+            <label class="chip">
+              <span>平台</span>
+              <el-select
+                v-model="form.providers"
+                class="chip-select provider-select"
+                size="small"
+                multiple
+                collapse-tags
+                collapse-tags-tooltip
+                placeholder="搜索平台"
+                :disabled="!ready"
+              >
+                <el-option
+                  v-for="item in availableProviderOptions"
+                  :key="item.value"
+                  :value="item.value"
+                  :label="item.label"
+                />
+              </el-select>
+            </label>
+            <label class="chip">
+              <span>条数</span>
+              <el-input-number
+                v-model="form.limit"
+                class="chip-number"
+                size="small"
+                :min="1"
+                :max="50"
+                controls-position="right"
+                :disabled="!ready"
+              />
+            </label>
+          </div>
         </div>
       </template>
+    </div>
 
-      <div class="section-block">
-        <div class="section-title">渠道调用</div>
-        <el-table :data="providerRows" size="small" border row-key="key" max-height="360" class="provider-call-table">
-          <el-table-column type="expand" width="46">
-            <template #default="scope">
-              <div class="provider-expanded-results">
-                <div v-if="scope.row.results.length" class="search-result-list provider-result-list">
-                  <div v-for="(item, index) in scope.row.results" :key="resultKey(scope.row.key, index, item)" class="search-result-card">
-                    <div class="result-row">
-                      <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ index + 1 }}. {{ item.title || item.url }}</a>
-                      <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题' }}</span>
-                      <div class="result-row-meta">
-                        <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score) }}</span>
-                        <el-tag size="small">{{ resultProviderLabel(item, scope.row.provider) }}</el-tag>
-                        <el-button
-                          v-if="hasResultDetails(item)"
-                          link
-                          class="result-expand-button"
-                          :icon="isResultOpen(resultKey(scope.row.key, index, item)) ? ArrowUp : ArrowDown"
-                          :title="isResultOpen(resultKey(scope.row.key, index, item)) ? '收起内容' : '展开内容'"
-                          @click.stop="toggleResultKey(resultKey(scope.row.key, index, item))"
-                        />
-                      </div>
-                    </div>
-                    <div v-if="hasResultDetails(item) && isResultOpen(resultKey(scope.row.key, index, item))" class="result-detail">
-                      <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
-                      <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
-                    </div>
-                  </div>
-                </div>
-                <el-empty v-else :description="callEmptyDescription(scope.row)" />
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="provider" label="渠道"><template #default="scope">{{ providerLabel(scope.row.provider) }}</template></el-table-column>
-          <el-table-column prop="key_alias" label="密钥" />
-          <el-table-column prop="attempt_index" label="尝试" width="86"><template #default="scope">第 {{ scope.row.attempt_index || 1 }} 次</template></el-table-column>
-          <el-table-column prop="status" label="状态" width="132">
-            <template #default="scope">
-              <div class="call-status-cell">
-                <el-tag :type="scope.row.status === 'success' ? 'success' : 'danger'">{{ scope.row.status === 'success' ? '成功' : '失败' }}</el-tag>
-                <el-tag v-if="scope.row.will_retry" size="small" type="warning">将重试</el-tag>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="result_count" label="结果" width="80" align="right" />
-          <el-table-column prop="latency_ms" label="延迟" width="100" align="right"><template #default="scope">{{ formatLatency(scope.row.latency_ms) }}</template></el-table-column>
-          <el-table-column prop="error" label="错误"><template #default="scope">{{ scope.row.error || '-' }}</template></el-table-column>
-        </el-table>
+    <div v-if="result" class="stage">
+      <div class="stats">
+        <span class="pill"><b>{{ result.meta?.total_results || result.results.length }}</b> 条结果</span>
+        <span class="pill">去重 <b>{{ result.meta?.deduped_results || 0 }}</b></span>
+        <span class="pill">耗时 <b>{{ formatLatency(result.meta?.latency_ms || 0) }}</b></span>
+        <span v-if="result.meta?.request_id" class="pill mono">{{ result.meta.request_id }}</span>
       </div>
 
-      <div class="section-block">
-        <div class="section-title">{{ hasProviderResults ? '合并结果' : '结果列表' }}</div>
-        <div v-if="result.results.length" class="search-result-list merged-result-list">
-          <div v-for="(item, index) in result.results" :key="resultKey('merged', index, item)" class="search-result-card">
-            <div class="result-row">
-              <a v-if="item.url" class="result-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ index + 1 }}. {{ item.title || item.url }}</a>
-              <span v-else class="result-title-link result-title-text">{{ index + 1 }}. {{ item.title || '无标题' }}</span>
-              <div class="result-row-meta">
-                <span v-if="item.score !== undefined" class="result-score">评分 {{ formatScore(item.score) }}</span>
-                <el-tag size="small">{{ resultProviderLabel(item) }}</el-tag>
-                <el-button
-                  v-if="hasResultDetails(item)"
-                  link
-                  class="result-expand-button"
-                  :icon="isResultOpen(resultKey('merged', index, item)) ? ArrowUp : ArrowDown"
-                  :title="isResultOpen(resultKey('merged', index, item)) ? '收起内容' : '展开内容'"
-                  @click.stop="toggleResultKey(resultKey('merged', index, item))"
-                />
-              </div>
+      <div class="results-wrap">
+        <div v-if="result.results.length" ref="resultListEl" class="result-list">
+          <article
+            v-for="(item, index) in result.results"
+            :key="resultKey('merged', index, item)"
+            class="result"
+            :style="{ animationDelay: `${0.08 + index * 0.05}s` }"
+          >
+            <div class="site">
+              <span class="ico">{{ siteInitial(item.url, item.title) }}</span>
+              <span class="site-text">{{ siteLabel(item.url) || '无链接' }}</span>
             </div>
-            <div v-if="hasResultDetails(item) && isResultOpen(resultKey('merged', index, item))" class="result-detail">
-              <p v-if="item.snippet" class="result-snippet">{{ item.snippet }}</p>
-              <p v-if="item.content" class="result-snippet result-content">{{ item.content }}</p>
+            <h3>
+              <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">{{ item.title || item.url }}</a>
+              <span v-else>{{ item.title || '无标题' }}</span>
+            </h3>
+            <p
+              v-if="item.snippet || item.content"
+              class="snip"
+              :class="{ open: isResultOpen(resultKey('merged', index, item)) }"
+            >
+              {{ isResultOpen(resultKey('merged', index, item)) ? (item.content || item.snippet) : (item.snippet || item.content) }}
+            </p>
+            <div class="foot">
+              <span class="tag">{{ resultProviderLabel(item) }}</span>
+              <span v-if="item.score !== undefined" class="tag muted">评分 {{ formatScore(item.score) }}</span>
+              <button
+                v-if="hasResultDetails(item)"
+                type="button"
+                class="expand-btn"
+                @click="toggleResultKey(resultKey('merged', index, item))"
+              >
+                {{ isResultOpen(resultKey('merged', index, item)) ? '收起' : '展开' }}
+              </button>
             </div>
-          </div>
+          </article>
         </div>
         <el-empty v-else description="暂无搜索结果" />
+
+        <aside v-if="providerRows.length" class="panel">
+          <h4>
+            渠道调用
+            <span class="live" :class="{ on: loading }"><i /><span>{{ loading ? 'searching' : 'done' }}</span></span>
+          </h4>
+
+          <div
+            v-for="(row, index) in providerRows"
+            :key="row.key"
+            class="call"
+            :style="{ animationDelay: `${0.16 + index * 0.06}s` }"
+          >
+            <div class="top">
+              <span>{{ providerLabel(row.provider) }}</span>
+              <span :class="row.status === 'success' ? 'ok' : 'fail'">
+                {{ row.status === 'success' ? '成功' : '失败' }}
+              </span>
+            </div>
+            <div class="sub">
+              {{ formatLatency(row.latency_ms) }}
+              <template v-if="row.key_alias"> · key {{ row.key_alias }}</template>
+              <template v-if="row.status === 'success'"> · {{ row.result_count }} 条</template>
+              <template v-if="row.attempt_index"> · 第 {{ row.attempt_index }} 次</template>
+              <template v-if="row.cached"> · 缓存</template>
+              <template v-if="row.will_retry"> · 将重试</template>
+              <template v-if="row.error"> · {{ row.error }}</template>
+            </div>
+            <div class="latency" :class="row.status === 'success' ? 'ok' : 'fail'">
+              <i :style="{ width: latencyWidth(row.latency_ms) + '%' }" />
+            </div>
+          </div>
+
+          <div v-if="result.meta?.request_id" class="panel-meta">
+            mode={{ form.mode }}<br />
+            {{ result.meta.request_id }}
+          </div>
+        </aside>
       </div>
-    </el-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
-import { ArrowDown, ArrowUp, Search } from '@element-plus/icons-vue'
+import { Search } from '@element-plus/icons-vue'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { api, ProviderCallLog, ProviderConfig, ProviderHealth } from '../api/client'
 import { providerLabel, providerOptions } from '../utils/providers'
+
+defineOptions({ name: 'PlaygroundView' })
 
 type SearchResultItem = {
   title?: string
@@ -219,6 +229,7 @@ const loading = ref(false)
 const loadingMeta = ref(true)
 const ready = ref(false)
 const result = ref<SearchResponse | null>(null)
+const resultListEl = ref<HTMLElement | null>(null)
 const openResultKeys = ref<string[]>([])
 const providers = ref<ProviderConfig[]>([])
 const providerHealth = ref<ProviderHealth[]>([])
@@ -307,7 +318,8 @@ const providerRows = computed<ProviderRow[]>(() => {
   }
   return rows
 })
-const hasProviderResults = computed(() => providerRows.value.some((row) => row.results.length > 0))
+
+const maxLatency = computed(() => Math.max(1, ...providerRows.value.map((row) => Number(row.latency_ms || 0))))
 
 function resultProviderLabel(item: SearchResultItem, fallback = '未知渠道') {
   if (item.providers?.length) return item.providers.map(providerLabel).join(', ')
@@ -325,14 +337,29 @@ function formatLatency(value: number) {
   return `${latency}ms`
 }
 
-function providerCallKey(call: ProviderCallLog, index: number) {
-  return `${call.provider_name}-${call.provider_key_id || 'no-key'}-${call.attempt_index || 1}-${index}`
+function latencyWidth(value: number) {
+  const ms = Number(value || 0)
+  return Math.max(8, Math.min(100, Math.round((ms / maxLatency.value) * 100)))
 }
 
-function callEmptyDescription(call: ProviderRow) {
-  if (call.error) return call.will_retry ? `${call.error}，将换 key 重试` : call.error
-  if (call.will_retry) return '本次失败，已换 key 重试'
-  return '该渠道暂无搜索结果'
+function siteLabel(url?: string) {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    const path = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '')
+    return `${parsed.hostname}${path}`
+  } catch {
+    return url
+  }
+}
+
+function siteInitial(url?: string, title?: string) {
+  const raw = siteLabel(url) || title || '?'
+  return raw.replace(/^www\./i, '').charAt(0).toUpperCase() || '?'
+}
+
+function providerCallKey(call: ProviderCallLog, index: number) {
+  return `${call.provider_name}-${call.provider_key_id || 'no-key'}-${call.attempt_index || 1}-${index}`
 }
 
 function hasResultDetails(item: SearchResultItem) {
@@ -401,6 +428,8 @@ async function run() {
       providers: form.providers,
       limit: form.limit
     }) as SearchResponse
+    await nextTick()
+    resultListEl.value?.scrollTo({ top: 0 })
   } catch (error) {
     ElMessage.error((error as Error).message)
   } finally {
@@ -412,99 +441,488 @@ onMounted(loadMeta)
 </script>
 
 <style scoped>
-.playground-page { max-width: 1080px; margin: 0 auto; }
-.playground-head {
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: .55; }
+}
+@keyframes bar-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes float-in {
+  from { opacity: 0; transform: translate(8px, 8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.playground-page {
+  --content: 720px;
+  --panel: 260px;
+  --gap: 20px;
+  --home-shift: max(96px, calc(42vh - 160px));
+  /* 对齐 page-main 上下 padding，整页不滚 */
+  --frame-h: calc(100dvh - 76px);
+  width: 100%;
+  max-width: var(--content);
+  margin: 0 auto;
+  height: var(--frame-h);
+  /* 有结果时允许侧栏浮出；首页态再裁切，避免 translate 撑出滚动 */
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+}
+.playground-page.is-home {
+  overflow: hidden;
+}
+
+/* 无结果：搜索区垂直居中；有结果：平滑上移到顶部 */
+.hero {
+  width: 100%;
+  flex: 0 0 auto;
+  transform: translateY(0);
+  transition: transform .5s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+.playground-page.is-home .hero {
+  transform: translateY(var(--home-shift));
+}
+.playground-page.has-result .hero {
+  transform: translateY(0);
+}
+.playground-page.has-result .brand {
+  margin-bottom: 12px;
+}
+.playground-page.has-result .brand h1 {
+  font-size: 22px;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 32px;
+  letter-spacing: -0.04em;
+  font-weight: 800;
+  transition: font-size .45s ease;
+}
+
+.brand {
+  width: 100%;
+  text-align: center;
+  margin-bottom: 22px;
+  transition: margin-bottom .45s ease;
+}
+.brand h1 em { font-style: normal; color: var(--primary); }
+.brand p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setup-banner {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid #f5d0a8;
+  border-radius: 14px;
+  background: #fffaf0;
+  animation: rise .4s ease both;
 }
-.playground-head h1 {
-  margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.02em;
+.setup-banner p { margin: 0 0 2px; font-weight: 700; }
+.setup-banner .sub { color: var(--muted); font-size: 12px; }
+
+.shell {
+  width: 100%;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  padding: 10px;
+  transition: box-shadow .2s ease, border-color .2s ease;
 }
-.search-shell { overflow: hidden; }
-.search-shell.blocked { opacity: 0.55; }
+.shell:focus-within {
+  border-color: #b7e4d2;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 16px 48px rgba(11,110,79,.12);
+}
+.shell.blocked { opacity: .55; }
+
 .search-row {
-  display: grid;
-  grid-template-columns: 24px 1fr auto;
-  gap: 10px;
+  display: flex;
   align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
 }
-.search-icon { color: var(--faint); }
+.search-icon { color: var(--faint); flex: 0 0 auto; }
+.search-input { flex: 1; min-width: 0; }
 .search-input :deep(.el-input__wrapper) {
   box-shadow: none !important;
   background: transparent;
   padding-left: 0;
 }
-.search-tools {
+.search-btn {
+  height: 42px;
+  border-radius: 14px !important;
+  padding: 0 20px;
+  font-weight: 650;
+}
+
+.filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  padding: 10px 8px 4px;
+  border-top: 1px solid #f0f2f5;
+  margin-top: 6px;
 }
-.provider-select { min-width: 220px; flex: 1; }
-.limit-field {
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f6f7f9;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px 4px 12px;
+  font-size: 12px;
+  color: #475467;
+  font-weight: 600;
+  transition: background .15s, border-color .15s, transform .12s;
+}
+.chip:hover { transform: translateY(-1px); }
+.chip.on {
+  background: var(--primary-soft);
+  border-color: #b7e4d2;
+  color: var(--primary-ink);
+}
+.chip-select { width: auto; }
+.chip-select :deep(.el-select__wrapper) {
+  box-shadow: none !important;
+  background: transparent;
+  min-height: 28px;
+  padding: 0 4px 0 0;
+}
+.mode-select { width: 84px; }
+.provider-select { min-width: 140px; max-width: 220px; }
+.chip-number { width: 96px; }
+.chip-number :deep(.el-input__wrapper) {
+  box-shadow: none !important;
+  background: transparent;
+  padding-left: 0;
+}
+
+.stage {
+  width: 100%;
+  margin-top: 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: rise .45s .12s ease both;
+}
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--muted);
+  animation: fade-in .4s .1s ease both;
+}
+.pill {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  transition: border-color .15s, transform .12s;
+}
+.pill:hover { border-color: #cfe8dc; transform: translateY(-1px); }
+.stats b { color: var(--text); font-weight: 700; }
+.mono { font-family: var(--mono); }
+
+.results-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 不可 hidden，否则 absolute 侧栏会被裁掉 */
+  overflow: visible;
+}
+.result-list {
+  height: 100%;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  padding-bottom: 8px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.result-list::-webkit-scrollbar { width: 8px; }
+.result-list::-webkit-scrollbar-thumb {
+  background: #d0d5dd;
+  border-radius: 99px;
+}
+.result-list::-webkit-scrollbar-track { background: transparent; }
+
+.result {
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.03);
+  transition: box-shadow .2s, border-color .2s, transform .2s;
+  animation: rise .45s ease both;
+}
+.result:last-child { margin-bottom: 4px; }
+.result:hover {
+  border-color: #cfe8dc;
+  box-shadow: 0 10px 28px rgba(11,110,79,.1);
+  transform: translateY(-2px);
+}
+.site {
+  font-size: 12px;
+  color: var(--muted);
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-.limit-field :deep(.el-input-number) { width: 110px; }
-.result-card { margin-top: 16px; }
-.result-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.result-meta { margin-left: 10px; font-size: 12px; font-weight: 500; }
-.section-block { margin-top: 16px; }
-.section-title { margin-bottom: 8px; color: var(--text); font-weight: 800; }
-.provider-call-table { width: 100%; }
-.call-status-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.provider-call-table :deep(.el-table__expanded-cell) { padding: 10px 12px; background: rgba(11, 110, 79, 0.04); }
-.provider-expanded-results { max-height: 320px; overflow-y: auto; padding-right: 4px; }
-.search-result-list { display: flex; flex-direction: column; gap: 8px; }
-.merged-result-list { max-height: 560px; overflow-y: auto; }
-.search-result-card {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #fff;
-}
-.result-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 28px;
-}
-.result-title-link {
   min-width: 0;
+}
+.site-text {
   overflow: hidden;
-  color: var(--text);
-  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-decoration: none;
 }
-.result-title-link:hover { color: var(--primary); }
-.result-row-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.result-score { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.result-expand-button { width: 24px; height: 24px; min-height: 24px; padding: 0; color: var(--primary); }
-.result-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-.result-snippet { margin: 0; color: var(--muted); line-height: 1.6; white-space: pre-wrap; }
-.result-content { margin-top: 8px; color: var(--text); }
-@media (max-width: 720px) {
-  .search-row { grid-template-columns: 1fr; }
-  .result-row { align-items: flex-start; flex-direction: column; }
+.ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #e8f6f0, #d4f0e4);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  flex: 0 0 auto;
+}
+.result h3 {
+  margin: 8px 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.result h3 a,
+.result h3 span {
+  color: var(--text);
+  text-decoration: none;
+  transition: color .15s;
+}
+.result h3 a:hover { color: var(--primary); }
+.snip {
+  margin: 0;
+  color: #475467;
+  font-size: 14px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.snip.open {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+.tag {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--primary-ink);
+  background: var(--primary-soft);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+.tag.muted {
+  color: var(--muted);
+  background: #f2f4f7;
+}
+.expand-btn {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0;
+}
+.expand-btn:hover { text-decoration: underline; }
+
+.panel {
+  position: absolute;
+  top: 0;
+  left: calc(100% + var(--gap));
+  width: var(--panel);
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 12px 32px rgba(16,24,40,.08);
+  animation: float-in .45s .15s ease both;
+  z-index: 2;
+}
+.panel h4 {
+  margin: 0 0 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+.live.on { color: var(--primary); }
+.live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  display: block;
+}
+.live.on i { animation: pulse-dot 1.4s ease infinite; }
+
+.call {
+  background: #f8faf9;
+  border: 1px solid #e8eaed;
+  border-radius: 12px;
+  padding: 11px 12px;
+  margin-bottom: 8px;
+  transition: background .15s, border-color .15s, transform .15s, box-shadow .15s;
+  animation: rise .4s ease both;
+}
+.call:hover {
+  background: #fff;
+  border-color: #cfe8dc;
+  box-shadow: 0 6px 16px rgba(11,110,79,.08);
+  transform: translateY(-1px);
+}
+.call .top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.call .sub {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.ok { color: var(--primary); }
+.fail { color: var(--danger); }
+.latency {
+  margin-top: 10px;
+  height: 3px;
+  background: #eef1f4;
+  border-radius: 99px;
+  overflow: hidden;
+}
+.latency > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transform-origin: left center;
+  animation: bar-fill .7s ease both;
+}
+.latency.ok > i { background: linear-gradient(90deg, #0b6e4f, #34d399); }
+.latency.fail > i { background: linear-gradient(90deg, #b42318, #f97066); }
+
+.panel-meta {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eef1f4;
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.5;
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+@media (max-width: 1180px) {
+  .results-wrap {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .result-list {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+  .panel {
+    position: static;
+    width: 100%;
+    max-height: none;
+    margin-top: 8px;
+    animation-name: rise;
+  }
+}
+@media (max-width: 640px) {
+  .playground-page {
+    --home-shift: max(48px, calc(28vh - 120px));
+    --frame-h: calc(100dvh - 48px);
+  }
+  .search-row { flex-direction: column; align-items: stretch; padding: 10px; }
+  .search-btn { width: 100%; }
+  .setup-banner { flex-direction: column; align-items: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero,
+  .brand h1,
+  .stage,
+  .result,
+  .call { transition: none !important; animation: none !important; }
 }
 </style>

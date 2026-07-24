@@ -148,6 +148,7 @@ func (s *Store) RuntimeSettings(ctx context.Context) (model.RuntimeSettings, err
 		ProviderHealthWindowMinutes: 15,
 		ProviderRoutingStrategy:     "fixed",
 		LogRetentionDays:            3,
+		SearchLogsLimit:             100,
 	}
 	var payload []byte
 	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key='runtime'`).Scan(&payload)
@@ -159,6 +160,12 @@ func (s *Store) RuntimeSettings(ctx context.Context) (model.RuntimeSettings, err
 	}
 	if err := json.Unmarshal(payload, &settings); err != nil {
 		return settings, err
+	}
+	if settings.SearchLogsLimit <= 0 {
+		settings.SearchLogsLimit = 100
+	}
+	if settings.SearchLogsLimit > 1000 {
+		settings.SearchLogsLimit = 1000
 	}
 	return settings, nil
 }
@@ -172,6 +179,12 @@ func (s *Store) UpdateRuntimeSettings(ctx context.Context, settings model.Runtim
 	}
 	if settings.LogRetentionDays <= 0 {
 		settings.LogRetentionDays = 3
+	}
+	if settings.SearchLogsLimit <= 0 {
+		settings.SearchLogsLimit = 100
+	}
+	if settings.SearchLogsLimit > 1000 {
+		settings.SearchLogsLimit = 1000
 	}
 	payload, err := json.Marshal(settings)
 	if err != nil {
@@ -879,8 +892,11 @@ func upsertUsage(ctx context.Context, tx pgx.Tx, input model.SearchLogInput) err
 }
 
 func (s *Store) ListSearchLogs(ctx context.Context, limit int) ([]model.SearchLog, error) {
-	if limit <= 0 || limit > 200 {
+	if limit <= 0 {
 		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, request_id, query, mode, compat_format, providers, cache_policy, cache_hit, result_count, status, error_message, latency_ms, created_at
